@@ -481,12 +481,8 @@ class _attention(torch.autograd.Function):
             o.stride(0), o.stride(1), o.stride(2), o.stride(3),
             q.shape[0], q.shape[1],
             N_CTX=q.shape[2],
-            BLOCK_M=BLOCK_M,
-            BLOCK_N=BLOCK_N,
             BLOCK_DMODEL=Lk,
             STAGE=stage,
-            num_warps=num_warps,
-            num_stages=num_stages,
         )
 
         grid = (1,1)
