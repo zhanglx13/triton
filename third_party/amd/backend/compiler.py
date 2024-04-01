@@ -59,7 +59,7 @@ class HIPOptions:
         # module to have one place for this and less device bc file dependency.
         libs = [
             "cuda2gcn", "opencl", "ocml", "ockl", "oclc_finite_only_off", "oclc_daz_opt_off",
-            "oclc_correctly_rounded_sqrt_on", "oclc_unsafe_math_off", oclc_wavefrontsize_lib, "oclc_abi_version_400"
+            "oclc_correctly_rounded_sqrt_on", "oclc_unsafe_math_off", oclc_wavefrontsize_lib, "oclc_abi_version_500"
         ]
         libs += ['oclc_isa_version_' + self.arch.replace('gfx', '')]
         for lib in libs:
@@ -188,7 +188,7 @@ class HIPBackend(BaseBackend):
         llvm_mod = llvm.to_module(mod, context)
         # Note that the code object version here should be consistent with the
         # linked oclc_abi_version_*.bc file.
-        llvm_mod.add_flag(llvm.MODULE_FLAG_BEHAVIOR_ERROR, "amdhsa_code_object_version", 400)
+        llvm_mod.add_flag(llvm.MODULE_FLAG_BEHAVIOR_ERROR, "amdhsa_code_object_version", 500)
 
         # Set kernel attributes first given this may affect later optimizations.
         kernels = [fn for fn in llvm_mod.get_functions() if not fn.is_declaration()]
