@@ -307,7 +307,6 @@ def make_backend(target):
     if len(actives) != 1:
         raise RuntimeError(
             f"{len(actives)} compatible backends for target ({target.backend}) ({actives}). There should only be one.")
-    print(f"{actives}")
     return actives[0](target)
 
 
