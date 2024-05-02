@@ -15,7 +15,7 @@ class GPUTarget(object):
     arch: Union[int, str]
     warp_size: int
 
-
+    
 class BaseBackend(metaclass=ABCMeta):
 
     def __init__(self, target: GPUTarget) -> None:

@@ -11,6 +11,7 @@ from functools import cached_property
 from typing import Callable, Generic, Iterable, Optional, TypeVar, Union, overload, Dict, Any, Tuple
 from ..runtime.driver import driver
 from types import ModuleType
+from triton.backends.compiler import GPUTarget
 
 TRITON_MODULE = __name__[:-len(".runtime.jit")]
 
@@ -605,6 +606,7 @@ class JITFunction(KernelInterface[T]):
     def run(self, *args, grid, warmup, **kwargs):
         # parse options
         device = driver.active.get_current_device()
+        print(f"{device=}")
         stream = driver.active.get_current_stream(device)
         kwargs["debug"] = self.debug
 
@@ -624,7 +626,10 @@ class JITFunction(KernelInterface[T]):
         if kernel is None:
             # Kernel is not cached; we have to compile.
             target = driver.active.get_current_target()
+            print(f"Real {target=}")
+            target = GPUTarget('cuda', 90, 32)
             backend = self.make_backend(target)
+            print(f"{backend=}")
             options = backend.parse_options(kwargs)
 
             # deprecated arguments
