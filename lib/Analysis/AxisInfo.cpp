@@ -1198,6 +1198,13 @@ unsigned ModuleAxisInfoAnalysis::getPtrContiguity(Value ptr) {
   // Here order should be ordered by contiguous first, so the first element
   // should have the largest contiguous.
   auto order = triton::gpu::getOrder(layout);
+
+  SmallVector<unsigned> testVec(3);
+  llvm::outs() << testVec[0] << ", " << testVec[1] << ", " << testVec[2] << "\n";
+  std::iota(testVec.rbegin(), testVec.rend(), 0);
+  llvm::outs() << testVec[0] << ", " << testVec[1] << ", " << testVec[2] << "\n";
+
+
   unsigned align = getPtrAlignment(ptr);
 
   auto uniqueContigPerThread =
@@ -1205,6 +1212,7 @@ unsigned ModuleAxisInfoAnalysis::getPtrContiguity(Value ptr) {
   assert(order[0] < uniqueContigPerThread.size() &&
          "Unexpected uniqueContigPerThread size");
   unsigned contiguity = uniqueContigPerThread[order[0]];
+  llvm::outs() << "contiguity in axifInfo = " << contiguity << "\n";
   LDBG("getPtrContiguity uniqueContigPerThread = " << contiguity);
   contiguity = std::min(align, contiguity);
 

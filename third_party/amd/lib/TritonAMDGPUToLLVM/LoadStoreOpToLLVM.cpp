@@ -104,6 +104,7 @@ struct LoadStoreConversionBase {
     if (!tensorTy)
       return 1;
     auto contiguity = getContiguity(ptr);
+    llvm::outs() << "contiguity = " << contiguity << "\n";
     auto pointeeBitWidth = triton::getPointeeBitWidth(tensorTy);
     // The maximum vector size is 128 bits on NVIDIA GPUs.
     return std::min<unsigned>(128 / pointeeBitWidth, contiguity);
@@ -269,6 +270,7 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
     Type valueElemTy =
         typeConverter->convertType(getElementTypeOrSelf(valueTy));
 
+    llvm::outs() << "getting vectorSize for store: \n";
     unsigned vec = getVectorSize(ptr);
     unsigned elemsPerThread = getTotalElemsPerThread(ptr.getType());
 
