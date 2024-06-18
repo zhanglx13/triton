@@ -1024,6 +1024,7 @@ emitOffsetForLayout(Attribute layout, RankedTensorType type,
 inline SmallVector<SmallVector<unsigned>>
 emitOffsetForSliceLayout(const SliceEncodingAttr &sliceLayout,
                          RankedTensorType type) {
+  llvm::outs() << "emitOffsetForSliceLayout: \n";
   auto parentEncoding = sliceLayout.getParent();
   unsigned dim = sliceLayout.getDim();
   auto parentShape = sliceLayout.paddedShape(type.getShape());
@@ -1177,12 +1178,13 @@ emitOffsetForLayoutUsingLinearLayouts(Attribute layout, RankedTensorType type);
 inline SmallVector<SmallVector<unsigned>>
 emitOffsetForLayout(Attribute layout, RankedTensorType type,
                     bool allowLLs /*= true*/) {
-  if (allowLLs) {
-    std::optional<SmallVector<SmallVector<unsigned>>> llOffsets =
-        emitOffsetForLayoutUsingLinearLayouts(layout, type);
-    if (llOffsets.has_value())
-      return *llOffsets;
-  }
+  llvm::outs() << "emitOffsetForLayout with allowLLs = " << allowLLs << "\n";
+  //if (allowLLs) {
+      //  std::optional<SmallVector<SmallVector<unsigned>>> llOffsets =
+           //      emitOffsetForLayoutUsingLinearLayouts(layout, type);
+      //  if (llOffsets.has_value())
+         //    return *llOffsets;
+      //}
 
   if (auto blockedLayout = dyn_cast<BlockedEncodingAttr>(layout))
     return emitOffsetForBlockedLayout(blockedLayout, type);
@@ -1226,6 +1228,8 @@ emitIndices(Location loc, RewriterBase &rewriter, const TargetInfoBase &target,
     if (llOffsets.has_value())
       return *llOffsets;
   }
+
+  llvm::outs() << "emitIndices() without LL \n";
 
   // step 1, delinearize threadId to get the base index
   auto multiDimBase = emitBaseIndexForLayout(loc, rewriter, target, layout,

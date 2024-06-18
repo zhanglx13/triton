@@ -678,9 +678,22 @@ SmallVector<unsigned>
 SliceEncodingAttr::getElemsPerThread(ArrayRef<int64_t> shape,
                                      Type eltTy) const {
   auto parent = getParent();
+  llvm::outs() << "SliceEncodingAttr::getElemsPerThread shape: ";
+  for (int i = 0; i < shape.size(); i++)
+      llvm::outs() << shape[i] << "  ";
+  llvm::outs() << "\n";
   auto parentElemsPerThread =
       ::getElemsPerThread(parent, paddedShape(shape), eltTy);
+  llvm::outs() << "parentElemsPerThread: ";
+  for (int i = 0; i < parentElemsPerThread.size(); i++)
+      llvm::outs() << parentElemsPerThread[i] << "  ";
+  llvm::outs() << "\n";
   parentElemsPerThread.erase(parentElemsPerThread.begin() + getDim());
+
+  llvm::outs() << "sliceElemsPerThread: ";
+  for (int i = 0; i < parentElemsPerThread.size(); i++)
+      llvm::outs() << parentElemsPerThread[i] << "  ";
+  llvm::outs() << "\n";
   return parentElemsPerThread;
 }
 unsigned SliceEncodingAttr::getTotalElemsPerThread(ArrayRef<int64_t> shape,

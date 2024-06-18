@@ -17,6 +17,7 @@ struct MakeRangeOpConversion
   LogicalResult
   matchAndRewrite(triton::MakeRangeOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    llvm::outs() << "MakeRangeOp lowering\n";
     Location loc = op->getLoc();
     RankedTensorType ty = op.getType();
     auto shape = ty.getShape();
@@ -26,6 +27,7 @@ struct MakeRangeOpConversion
     Value start = createIndexAttrConstant(rewriter, loc, elemTy, op.getStart());
     auto idxs = emitIndices(loc, rewriter, targetInfo, layout, ty, true);
     unsigned elems = idxs.size();
+    llvm::outs() << "elems = " << elems << "\n";
     SmallVector<Value> retVals(elems);
     // TODO: slice layout has more elements than expected.
     // Unexpected behavior for make range, but generally OK when followed by
