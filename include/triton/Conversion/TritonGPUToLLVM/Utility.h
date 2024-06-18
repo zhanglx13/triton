@@ -1179,12 +1179,12 @@ inline SmallVector<SmallVector<unsigned>>
 emitOffsetForLayout(Attribute layout, RankedTensorType type,
                     bool allowLLs /*= true*/) {
   llvm::outs() << "emitOffsetForLayout with allowLLs = " << allowLLs << "\n";
-  //if (allowLLs) {
-      //  std::optional<SmallVector<SmallVector<unsigned>>> llOffsets =
-           //      emitOffsetForLayoutUsingLinearLayouts(layout, type);
-      //  if (llOffsets.has_value())
-         //    return *llOffsets;
-      //}
+  if (allowLLs) {
+    std::optional<SmallVector<SmallVector<unsigned>>> llOffsets =
+      emitOffsetForLayoutUsingLinearLayouts(layout, type);
+    if (llOffsets.has_value())
+      return *llOffsets;
+  }
 
   if (auto blockedLayout = dyn_cast<BlockedEncodingAttr>(layout))
     return emitOffsetForBlockedLayout(blockedLayout, type);

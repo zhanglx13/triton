@@ -443,6 +443,21 @@ LinearLayout mfmaToLinearLayout(ArrayRef<int64_t> shape,
   SmallVector<unsigned> order = triton::gpu::getOrder(mfma);
   auto tileLayout = LinearLayout::empty();
 
+  StringAttr dim0 = outDimNames[order[0]];
+  StringAttr dim1 = outDimNames[order[1]];
+
+  llvm::outs() << "dim0 = " << dim0 << ", dim1 = " << dim1 << "\n";
+
+  if (mfma.getIsTransposed()) {
+      llvm::outs() << "mfma transposed layout !!!!! \n";
+      dim0 = outDimNames[order[1]];
+      dim1 = outDimNames[order[0]];
+  }
+
+  llvm::outs() << "dim0 = " << dim0 << ", dim1 = " << dim1 << "\n";
+
+  llvm::outs() << "outDimNames[order[0]], outDimNames[order[1]] = " << outDimNames[order[0]] << ", " << outDimNames[order[1]] << "\n";
+
   if (mfma.getMDim() == 32) {
     // For mfma with 32x32 output, each of the 64 threads holds 16 elements.
     //
@@ -456,7 +471,7 @@ LinearLayout mfmaToLinearLayout(ArrayRef<int64_t> shape,
     tileLayout = LinearLayout(
         {{kRegister, {{0, 1}, {0, 2}, {0, 8}, /*gap*/ {0, 16}}},
          {kLane, {{1, 0}, {2, 0}, {4, 0}, {8, 0}, {16, 0}, /*gap*/ {0, 4}}}},
-        {outDimNames[order[0]], outDimNames[order[1]]});
+        {dim0, dim1});
   } else {
     assert(mfma.getMDim() == 16);
     // For mfma with 16x16 output, each of the 64 threads holds 4 elements.
@@ -467,10 +482,16 @@ LinearLayout mfmaToLinearLayout(ArrayRef<int64_t> shape,
     // For the lane (i.e., thread) dimension, these threads are along the
     // matrix C's N dimension, with 16 consecutive threads covering a whole
     // row and the next 16 threads start after a gap spanning 4 rows.
-    tileLayout = LinearLayout(
-        {{kRegister, {{0, 1}, {0, 2}}},
-         {kLane, {{1, 0}, {2, 0}, {4, 0}, {8, 0}, /*gap*/ {0, 4}, {0, 8}}}},
-        {outDimNames[order[0]], outDimNames[order[1]]});
+    if (mfma.getIsTransposed())
+        tileLayout = LinearLayout(
+            {{kRegister, {{1, 0}, {2, 0}}},
+             {kLane, {{0, 1}, {0, 2}, {0, 4}, {0, 8}, /*gap*/ {4, 0}, {8, 0}}}},
+            {outDimNames[order[0]], outDimNames[order[1]]});
+    else
+        tileLayout = LinearLayout(
+            {{kRegister, {{0, 1}, {0, 2}}},
+             {kLane, {{1, 0}, {2, 0}, {4, 0}, {8, 0}, /*gap*/ {0, 4}, {0, 8}}}},
+            {outDimNames[order[0]], outDimNames[order[1]]});
   }
   if (hasBatchDim) {
     assert(order[2] == 0);
@@ -554,6 +575,8 @@ LinearLayout wmmaToLinearLayout(ArrayRef<int64_t> shape,
 std::optional<LinearLayout> sliceToLinearLayout(ArrayRef<int64_t> shape,
                                                 SliceEncodingAttr slice) {
   MLIRContext *ctx = slice.getContext();
+
+  llvm::outs() << "sliceToLinearLayout ------ \n";
 
   // First compute the linear layout for this layout's parent.
   SmallVector<int64_t> parentShape(shape);

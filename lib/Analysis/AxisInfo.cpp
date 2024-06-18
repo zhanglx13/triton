@@ -1209,6 +1209,8 @@ unsigned ModuleAxisInfoAnalysis::getPtrContiguity(Value ptr) {
 
   auto uniqueContigPerThread =
       triton::gpu::getUniqueContigPerThread(layout, tensorTy.getShape());
+  llvm::outs() << "uniqueContigPerThread: " << uniqueContigPerThread[0] << ", " << uniqueContigPerThread[1] << "\n";
+  llvm::outs() << "order: " << order[0] << ", " << order[1] << "\n";
   assert(order[0] < uniqueContigPerThread.size() &&
          "Unexpected uniqueContigPerThread size");
   unsigned contiguity = uniqueContigPerThread[order[0]];

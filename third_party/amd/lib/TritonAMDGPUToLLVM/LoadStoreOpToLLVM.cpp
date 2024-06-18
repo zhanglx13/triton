@@ -272,6 +272,7 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
 
     llvm::outs() << "getting vectorSize for store: \n";
     unsigned vec = getVectorSize(ptr);
+    llvm::outs() << "vec = " << vec << "\n";
     unsigned elemsPerThread = getTotalElemsPerThread(ptr.getType());
 
     auto ptrElems = unpackLLElements(loc, llPtr, rewriter);
@@ -289,21 +290,30 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
       vec = std::min(vec, maskAlign);
     }
 
+    llvm::outs() << "vec = " << vec << "\n";
+
     Value mask = redundantDataMask(valueTy, rewriter, loc, targetInfo);
     const size_t dtsize =
         std::max<int>(1, valueElemTy.getIntOrFloatBitWidth() / 8);
     const size_t valueElemNBits = dtsize * 8;
 
     const int numVecs = elemsPerThread / vec;
+
+    llvm::outs() << "numVecs = " << numVecs << "\n";
     for (size_t vecStart = 0; vecStart < elemsPerThread; vecStart += vec) {
       // TODO: optimization when ptr is AddPtr with constant offset
       size_t in_off = 0;
 
       const size_t maxWordWidth = std::max<size_t>(32, valueElemNBits);
+      llvm::outs() << "maxWordWidth = " << maxWordWidth << "\n";
       const size_t totalWidth = valueElemNBits * vec;
+      llvm::outs() << "totalWidth = " << totalWidth << "\n";
       const size_t width = std::min(totalWidth, maxWordWidth);
+      llvm::outs() << "width = " << width << "\n";
       const size_t nWords = std::max<size_t>(1, totalWidth / width);
+      llvm::outs() << "nWords = " << nWords << "\n";
       const size_t wordNElems = width / valueElemNBits;
+      llvm::outs() << "wordNElems = " << wordNElems << "\n";
       assert(wordNElems * nWords * numVecs == elemsPerThread);
 
       // TODO(Superjomn) Add cache policy fields to StoreOp.
