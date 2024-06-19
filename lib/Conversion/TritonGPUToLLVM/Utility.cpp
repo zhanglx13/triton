@@ -253,6 +253,10 @@ emitOffsetForLayoutUsingLinearLayouts(Attribute layout, RankedTensorType type) {
   auto shape = type.getShape();
   unsigned rank = shape.size();
 
+  llvm::outs() << "Calling emitOffsetForLayoutUsingLinearLayouts() with layout = ";
+  llvm::outs() << layout;
+  llvm::outs() << "\n";
+
   std::optional<LinearLayout> ll = triton::gpu::toLinearLayout(shape, layout);
   if (!ll.has_value()) {
     return std::nullopt;

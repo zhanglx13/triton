@@ -1093,6 +1093,9 @@ emitBaseIndexForLayoutImpl(Location loc, RewriterBase &rewriter,
                            const TargetInfoBase &target, Attribute layout,
                            RankedTensorType type, bool withCTAOffset) {
   auto shape = type.getShape();
+  llvm::outs() << "Calling emitBaseIndexForLaoutImpl() with layout = ";
+  llvm::outs() << layout;
+  llvm::outs() << "\n";
 
   SmallVector<Value> baseIndex;
   RewriterBase::InsertionGuard guard(rewriter);
@@ -1176,6 +1179,10 @@ emitOffsetForLayout(Attribute layout, RankedTensorType type,
       return *llOffsets;
   }
 
+  llvm::outs() << "Calling emitOffsetForLayout() w/o LL with layout = ";
+  llvm::outs() << layout;
+  llvm::outs() << "\n";
+
   if (auto blockedLayout = dyn_cast<BlockedEncodingAttr>(layout))
     return emitOffsetForBlockedLayout(blockedLayout, type);
   if (auto mmaLayout = dyn_cast<NvidiaMmaEncodingAttr>(layout)) {
@@ -1219,10 +1226,16 @@ emitIndices(Location loc, RewriterBase &rewriter, const TargetInfoBase &target,
       return *llOffsets;
   }
 
+  llvm::outs() << "# Calling emitIndices() with layout = ";
+  llvm::outs() << layout;
+  llvm::outs() << "\n";
   // step 1, delinearize threadId to get the base index
+
+  llvm::outs() << "\n# Calling emitBaseIndexForLayout()\n";
   auto multiDimBase = emitBaseIndexForLayout(loc, rewriter, target, layout,
                                              type, withCTAOffset);
   // step 2, get offset of each element
+  llvm::outs() << "\n# Calling emitOffsetForLayout()\n";
   auto offset = emitOffsetForLayout(layout, type);
   // step 3, add offset to base, and reorder the sequence
   // of indices to guarantee that elems in the same
@@ -1235,6 +1248,8 @@ emitIndices(Location loc, RewriterBase &rewriter, const TargetInfoBase &target,
   for (unsigned n = 0; n < elemsPerThread; ++n)
     for (unsigned k = 0; k < rank; ++k)
       multiDimIdx[n][k] = add(multiDimBase[k], i32_val(offset[n][k]));
+
+  llvm::outs() << "# Finished emitIndices()\n\n";
 
   return multiDimIdx;
 }

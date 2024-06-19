@@ -235,7 +235,14 @@ struct ExpandDimsOpConversion : public ConvertOpToLLVMPattern<ExpandDimsOp> {
           loc, "ExpandDimsOp only supports SliceEncodingAttr as its input");
     }
     auto resultLayout = resultTy.getEncoding();
+
+    llvm::outs() << "# Lowering expand_dim\n";
+    llvm::outs() << "  srcLayout: " << srcLayout << "\n";
+    llvm::outs() << "  dstLayout: " << resultLayout << "\n";
+
+    llvm::outs() << "\n# Calling emitOffsetForLayout() for expand_dim srcLayout\n";
     auto srcOffsets = emitOffsetForLayout(srcLayout, srcTy);
+    llvm::outs() << "\n# Calling emitOffsetForLayout() for expand_dim dstLayout\n";
     auto resultOffsets = emitOffsetForLayout(resultLayout, resultTy);
     std::map<SmallVector<unsigned>, Value> srcValues;
     for (size_t i = 0; i < srcOffsets.size(); i++) {
@@ -250,6 +257,7 @@ struct ExpandDimsOpConversion : public ConvertOpToLLVMPattern<ExpandDimsOp> {
     Value ret =
         packLLElements(loc, typeConverter, resultVals, rewriter, resultTy);
     rewriter.replaceOp(op, ret);
+    llvm::outs() << "# Finished Lowering expand_dim\n\n";
     return success();
   }
 };
@@ -315,6 +323,11 @@ struct BroadcastOpConversion
     auto resultTy = cast<RankedTensorType>(result.getType());
     auto srcLayout = srcTy.getEncoding();
     auto resultLayout = resultTy.getEncoding();
+
+    llvm::outs() << "# Lowering broadcast\n";
+    llvm::outs() << "  srcLayout: " << srcLayout << "\n";
+    llvm::outs() << "  dstLayout: " << resultLayout << "\n";
+
     auto srcShape = srcTy.getShape();
     auto resultShape = resultTy.getShape();
     unsigned rank = srcTy.getRank();
@@ -339,6 +352,7 @@ struct BroadcastOpConversion
     Value resultStruct =
         packLLElements(loc, typeConverter, resultVals, rewriter, resultTy);
     rewriter.replaceOp(op, {resultStruct});
+    llvm::outs() << "# Finished Lowering broadcast\n\n";
     return success();
   }
 };

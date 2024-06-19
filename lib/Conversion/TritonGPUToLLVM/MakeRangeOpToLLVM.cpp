@@ -18,9 +18,16 @@ struct MakeRangeOpConversion
   matchAndRewrite(triton::MakeRangeOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
+
+    llvm::outs() << "# Lowering make_range\n";
+
+
     RankedTensorType ty = op.getType();
     auto shape = ty.getShape();
     auto layout = ty.getEncoding();
+
+    llvm::outs() << "  layout: " << layout << "\n";
+
     auto elemTy = ty.getElementType();
     assert(elemTy.isInteger(32));
     Value start = createIndexAttrConstant(rewriter, loc, elemTy, op.getStart());
@@ -37,6 +44,7 @@ struct MakeRangeOpConversion
     auto typeConverter = getTypeConverter();
     Value result = packLLElements(loc, typeConverter, retVals, rewriter, ty);
     rewriter.replaceOp(op, result);
+    llvm::outs() << "# Finished Lowering make_range\n\n";
     return success();
   }
 
