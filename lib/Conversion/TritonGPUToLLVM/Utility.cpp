@@ -211,6 +211,10 @@ emitIndicesUsingLinearLayouts(Location loc, RewriterBase &rewriter,
   MLIRContext *ctx = rewriter.getContext();
   auto shape = type.getShape();
 
+  llvm::outs() << "Calling emitIndicesUsingLinearLayouts() with layout = ";
+  llvm::outs() << layout;
+  llvm::outs() << "\n";
+
   std::optional<LinearLayout> ll = triton::gpu::toLinearLayout(shape, layout);
   if (!ll.has_value()) {
     return std::nullopt;
