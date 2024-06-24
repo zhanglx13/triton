@@ -617,9 +617,15 @@ std::optional<LinearLayout> sliceToLinearLayout(ArrayRef<int64_t> shape,
   return ret;
 }
 
+
+
 LinearLayout sharedToLinearLayoutNoLeadingOffset(ArrayRef<int64_t> shape,
                                                  SharedEncodingAttr shared) {
   assert(!shared.getHasLeadingOffset());
+
+  llvm::outs() << "Calling sharedToLinearLayoutNoLeadingOffset() with layout = ";
+  llvm::outs() << shared;
+  llvm::outs() << "\n";
 
   MLIRContext *ctx = shared.getContext();
   int rank = shape.size();
@@ -652,8 +658,26 @@ LinearLayout sharedToLinearLayoutNoLeadingOffset(ArrayRef<int64_t> shape,
     int maxPhase = shared.getMaxPhase();
     bases2D.push_back({row, (vec * ((row / perPhase) % maxPhase)) % numCols});
   }
+
+
+  for (auto base : bases2D) {
+      llvm::outs() << "{" << base[0] << ", " << base[1] << "}\n";
+  }
+
   LinearLayout ctaLayout =
       LinearLayout({{S("offset"), bases2D}}, {rowDimName, colDimName});
+
+  /*
+  std::unique_ptr<uint64_t[]> mat = getMatrix(ctaLayout);
+  int numR = ctaLayout.getTotalOutDimSizeLog2();
+  int numC = ctaLayout.getTotalInDimSizeLog2();
+  for (int r = 0; r < numR; r++){
+      for (int c = 0; c < numC; c++){
+          llvm::outs() << mat[r*numC + c] << "  ";
+      }
+      llvm::outs() << "\n";
+  }
+  */
 
   // Add the remaining dimensions.
   for (int i = 2; i < rank; i++) {

@@ -1456,6 +1456,9 @@ loadSharedToDistributed(RankedTensorType dstTy, MemDescType srcTy,
     }
   }
 
+  LDBG("# Calling loadSharedToDistributed() w/o LL\n"
+       << "srcTy: " << srcTy);
+
   auto dstShape = dstTy.getShape();
   assert(dstShape.size() <= 2 && "Unexpected rank of loadSharedToDistributed");
   auto dstDistributedLayout = dstTy.getEncoding();
