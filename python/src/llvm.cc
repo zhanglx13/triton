@@ -244,7 +244,10 @@ void init_triton_llvm(py::module &&m) {
   m.def(
       "to_module",
       [](mlir::ModuleOp &mod, llvm::LLVMContext &ctx) {
-        return mlir::translateModuleToLLVMIR(mod, ctx);
+        auto m = mlir::translateModuleToLLVMIR(mod, ctx);
+        if (mlir::triton::tools::getBoolEnv("DUMP_LLVM_ENTRY_IR"))
+          m->dump();
+        return m;
       },
       py::keep_alive<0, 2>());
 
@@ -266,6 +269,7 @@ void init_triton_llvm(py::module &&m) {
         }
       }
     }
+
     using namespace llvm;
     LoopAnalysisManager lam;
     FunctionAnalysisManager fam;
@@ -276,7 +280,7 @@ void init_triton_llvm(py::module &&m) {
     PassInstrumentationCallbacks passInstrCb;
     StandardInstrumentations standardInstr(mod->getContext(),
                                            /*DebugLogging*/ true);
-    if (mlir::triton::tools::getBoolEnv("LLVM_IR_ENABLE_DUMP")) {
+    if (mlir::triton::tools::getBoolEnv("DUMP_LLVM_OPT_IR")) {
       auto optMap = llvm::cl::getRegisteredOptions();
       auto optIt = optMap.find("print-after-all");
       if (optIt != optMap.end()) {
@@ -285,6 +289,17 @@ void init_triton_llvm(py::module &&m) {
       }
       standardInstr.registerCallbacks(passInstrCb, &mam);
       instrCbPtr = &passInstrCb;
+    }
+
+    if (mlir::triton::tools::getBoolEnv("DUMP_LLVM_OPT_PASS_NAME")) {
+	auto optMap = llvm::cl::getRegisteredOptions();
+	auto optIt = optMap.find("debug-pass-manager");
+	if (optIt != optMap.end()) {
+	    auto optPtr = static_cast<llvm::cl::opt<bool> *>(optIt->second);
+	    *optPtr = true;
+	}
+	standardInstr.registerCallbacks(passInstrCb, &mam);
+	instrCbPtr = &passInstrCb;
     }
 
     PipelineTuningOptions tuningOptions;
@@ -299,7 +314,20 @@ void init_triton_llvm(py::module &&m) {
     // some scheduling solution.
     tuningOptions.SLPVectorization = true;
 
-    PassBuilder pb(nullptr /*targetMachine*/, tuningOptions, std::nullopt,
+    std::string error;
+    auto target =
+        llvm::TargetRegistry::lookupTarget(mod->getTargetTriple(), error);
+    llvm::TargetOptions targetOpt;
+    targetOpt.AllowFPOpFusion = llvm::FPOpFusion::Fast;
+    targetOpt.UnsafeFPMath = false;
+    targetOpt.NoInfsFPMath = false;
+    targetOpt.NoNaNsFPMath = true;
+    targetOpt.TrapUnreachable = true;
+    std::unique_ptr<llvm::TargetMachine> machine{target->createTargetMachine(
+	    mod->getTargetTriple(), "gfx942", "", targetOpt, llvm::Reloc::PIC_,
+	    std::nullopt)};
+
+    PassBuilder pb(machine.get() /*targetMachine*/, tuningOptions, std::nullopt,
                    instrCbPtr);
 
     std::string pluginFile =
