@@ -299,7 +299,20 @@ void init_triton_llvm(py::module &&m) {
     // some scheduling solution.
     tuningOptions.SLPVectorization = true;
 
-    PassBuilder pb(nullptr /*targetMachine*/, tuningOptions, std::nullopt,
+    std::string error;
+    auto target =
+        llvm::TargetRegistry::lookupTarget(mod->getTargetTriple(), error);
+    llvm::TargetOptions targetOpt;
+    targetOpt.AllowFPOpFusion = llvm::FPOpFusion::Fast;
+    targetOpt.UnsafeFPMath = false;
+    targetOpt.NoInfsFPMath = false;
+    targetOpt.NoNaNsFPMath = true;
+    targetOpt.TrapUnreachable = true;
+    std::unique_ptr<llvm::TargetMachine> machine{target->createTargetMachine(
+        mod->getTargetTriple(), "gfx942", "", targetOpt, llvm::Reloc::PIC_,
+        std::nullopt)};
+
+    PassBuilder pb(machine.get() /*targetMachine*/, tuningOptions, std::nullopt,
                    instrCbPtr);
 
     std::string pluginFile =
