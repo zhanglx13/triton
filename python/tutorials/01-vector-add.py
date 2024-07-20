@@ -45,8 +45,8 @@ def add_kernel(x_ptr,  # *Pointer* to first input vector.
     mask = offsets < n_elements
     # Load x and y from DRAM, masking out any extra elements in case the input is not a
     # multiple of the block size.
-    x = tl.load(x_ptr + offsets, mask=mask)
-    y = tl.load(y_ptr + offsets, mask=mask)
+    x = tl.load(x_ptr + offsets, mask=mask, cache_modifier='.cg')
+    y = tl.load(y_ptr + offsets, mask=mask, cache_modifier='.cg')
     output = x + y
     # Write x + y back to DRAM.
     tl.store(output_ptr + offsets, output, mask=mask)
@@ -79,16 +79,16 @@ def add(x: torch.Tensor, y: torch.Tensor):
 # %%
 # We can now use the above function to compute the element-wise sum of two `torch.tensor` objects and test its correctness:
 
-torch.manual_seed(0)
-size = 98432
-x = torch.rand(size, device='cuda')
-y = torch.rand(size, device='cuda')
-output_torch = x + y
-output_triton = add(x, y)
-print(output_torch)
-print(output_triton)
-print(f'The maximum difference between torch and triton is '
-      f'{torch.max(torch.abs(output_torch - output_triton))}')
+#torch.manual_seed(0)
+#size = 98432
+#x = torch.rand(size, device='cuda')
+#y = torch.rand(size, device='cuda')
+#output_torch = x + y
+#output_triton = add(x, y)
+#print(output_torch)
+#print(output_triton)
+#print(f'The maximum difference between torch and triton is '
+#      f'{torch.max(torch.abs(output_torch - output_triton))}')
 
 # %%
 # Seems like we're good to go!
@@ -105,7 +105,7 @@ print(f'The maximum difference between torch and triton is '
 @triton.testing.perf_report(
     triton.testing.Benchmark(
         x_names=['size'],  # Argument names to use as an x-axis for the plot.
-        x_vals=[2**i for i in range(12, 28, 1)],  # Different possible values for `x_name`.
+        x_vals=[67108864],  # Different possible values for `x_name`.
         x_log=True,  # x axis is logarithmic.
         line_arg='provider',  # Argument name whose value corresponds to a different line in the plot.
         line_vals=['triton', 'torch'],  # Possible values for `line_arg`.
