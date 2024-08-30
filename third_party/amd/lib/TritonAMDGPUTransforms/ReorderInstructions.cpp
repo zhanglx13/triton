@@ -91,7 +91,7 @@ public:
         for (Operation &op : forOp) {
             if (auto dotOp = dyn_cast<triton::DotOp>(&op)) {
                 //for (auto &loadOp : loadOps) {
-                loadOps[0] -> moveBefore(dotOp);
+                loadOps[1] -> moveBefore(dotOp);
                 //}
             }
         }
