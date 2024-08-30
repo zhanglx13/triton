@@ -176,8 +176,8 @@ class HIPBackend(BaseBackend):
         passes.ttgpuir.add_optimize_dot_operands(pm, True)
         passes.ttgpuir.add_remove_layout_conversions(pm)
         passes.ttgpuir.add_reduce_data_duplication(pm)
-        if use_new_pipeliner or options.num_stages != 0:
-            amd.passes.ttgpuir.add_reorder_instructions(pm)
+        #if use_new_pipeliner or options.num_stages != 0:
+        amd.passes.ttgpuir.add_reorder_instructions(pm)
         passes.common.add_cse(pm)
         passes.common.add_symbol_dce(pm)
         pm.run(mod)
