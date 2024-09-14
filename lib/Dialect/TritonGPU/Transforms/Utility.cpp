@@ -756,6 +756,9 @@ static bool isFreeConvert(Operation *op) {
   auto convertOp = dyn_cast<triton::gpu::ConvertLayoutOp>(op);
   if (!convertOp)
     return false;
+  llvm::outs() << "About to call cvtReordersRegisters for\n";
+  op->dump();
+  llvm::outs() << "\n";
   return cvtReordersRegisters(convertOp.getSrc().getType(),
                               convertOp.getType());
 }

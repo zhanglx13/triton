@@ -1215,10 +1215,20 @@ public:
     // 1. Propagate layout forward starting from "anchor" ops.
     m.walk([](FuncOp funcOp) {
       LayoutPropagation layoutPropagation(funcOp);
+      llvm::outs() << "Dump layout propagation 1:\n";
+      layoutPropagation.dump();
       layoutPropagation.initAnchorLayout();
+      llvm::outs() << "Dump layout propagation 2:\n";
+      layoutPropagation.dump();
       layoutPropagation.propagateLayout();
+      llvm::outs() << "Dump layout propagation 3:\n";
+      layoutPropagation.dump();
       layoutPropagation.resolveConflicts();
+      llvm::outs() << "Dump layout propagation 4:\n";
+      layoutPropagation.dump();
       layoutPropagation.rewrite();
+      llvm::outs() << "Dump layout propagation 5:\n";
+      layoutPropagation.dump();
     });
 
     LLVM_DEBUG({

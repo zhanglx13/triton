@@ -464,6 +464,10 @@ AMDMfmaEncodingAttr::toLinearLayout(ArrayRef<int64_t> shape) const {
   int nIndex = 1 + hasBatchDim;
   (void)mIndex, (void)nIndex;
 
+  llvm::outs() << "shape[mIndex] = " << shape[mIndex] << "\n";
+  llvm::outs() << "shape[nIndex] = " << shape[nIndex] << "\n";
+  llvm::outs() << "getMDim() = " << getMDim() << "\n";
+  llvm::outs() << "getNDim() = " << getNDim() << "\n";
   assert(((shape[mIndex] == 1 || shape[mIndex] >= getMDim()) &&
           (shape[nIndex] == 1 || shape[nIndex] >= getNDim())) &&
          "Unsupported tensor shape for given mfma layout");
