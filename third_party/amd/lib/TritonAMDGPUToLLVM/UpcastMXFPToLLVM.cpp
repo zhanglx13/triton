@@ -25,6 +25,10 @@ SmallVector<Value, 4> upcast8xMxfp4(RewriterBase &rewriter,
                                     UpcastMXFPOp upcastOp, bool tofp16,
                                     Value packedVec) {
   Location loc = upcastOp.getLoc();
+  Type i32Ty = rewriter.getI32Type();
+  Value input = bitcast(packedVec, i32Ty);
+
+  return {input, input, input, input};
 
   // MXFP4 has 4 bits, S.EE.M, for Sign, Exponent, and Mantissa respectively.
   // For a specific S, we have a total of 8 bit patterns. We can encode all
@@ -55,14 +59,14 @@ SmallVector<Value, 4> upcast8xMxfp4(RewriterBase &rewriter,
   Value resB1LutLoNoS = tofp16 ? i32_val(0x3e3c3800) : i32_val(0x3f3f3f00);
   Value resB1LutHiNoS = tofp16 ? i32_val(0x46444240) : i32_val(0x40404040);
 
-  Type i32Ty = rewriter.getI32Type();
+
   auto permU32FnTy = LLVM::LLVMFunctionType::get(i32Ty, {i32Ty, i32Ty, i32Ty});
   LLVM::LLVMFuncOp funcOp = appendOrGetExternFuncOp(
       rewriter, upcastOp, "llvm.amdgcn.perm", permU32FnTy);
 
   // Start with 8 mxfp4 elements in a single i32 register
   // | e7e6 | e5e4 | e3e2 | e1e0 |
-  Value input = bitcast(packedVec, i32Ty);
+
 
   // Step 1: extract EM bits for elements 0,2,4,6 and 1,3,5,7 respectively.
   // e2m1_6420_idx = | 0[0e6EM] | 0[0e4EM] | 0[0e2EM] | 0[0e0EM] |
@@ -211,6 +215,7 @@ Value mxfpScaleFp16(RewriterBase &rewriter, Location loc, Value v, Value scale,
 // for us, just with unnecessary overheads.
 Value mxfpScaleBf16ViaF32(RewriterBase &rewriter, Location loc, Value v,
                           Value scale, bool fastMath) {
+  return v;
   Value c16 = i32_val(16);
   Value vF32 = bitcast(shl(zext(i32_ty, bitcast(v, i16_ty)), c16), f32_ty);
   Value scaleF32 = bitcast(shl(zext(i32_ty, scale), i32_val(23)), f32_ty);
