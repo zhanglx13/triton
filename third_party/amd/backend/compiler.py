@@ -235,6 +235,28 @@ class HIPBackend(BaseBackend):
             amd.passes.ttgpuir.add_stream_pipeline(pm, options.num_stages, stream_prefetch)
             passes.common.add_canonicalizer(pm)
         amd.passes.ttgpuir.insert_instruction_sched_hints(pm)
+
+        '''
+        for line in str(mod).splitlines():  # Split the string into lines
+            if line.lstrip().startswith("tt.func") and "matmul_NTN" in line:
+                print("compiling matmul kernel")
+                pm.run(mod)
+                tname = "./cache.ir"
+                outname = "./tempout.ir"
+                with open(outname, 'wb') as fd_out:
+                    fd_out.write(str(mod).encode())
+                    fd_out.close()
+                if os.path.isfile(tname) is False:
+                    tname = outname
+                mod2 = ir.parse_mlir_module(tname, mod.context)
+                mod2.context = mod.context
+                pm = ir.pass_manager(mod.context)
+                pm.enable_debug()
+                mod = mod2
+            #else:
+            #    print("compiling conversion kernels")
+        '''
+
         passes.ttgpuir.add_optimize_dot_operands(pm, True)
         passes.ttgpuir.add_remove_layout_conversions(pm)
         passes.ttgpuir.add_reduce_data_duplication(pm)
