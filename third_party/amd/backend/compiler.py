@@ -97,7 +97,15 @@ class HIPOptions:
     instrumentation_mode: str = ""
 
     # The following option provides hints to the AMDGPU backend regarding instruction scheduling
-    # for all `tt.dot` operations in a kernel. Experimental; right now no effect.
+    # for all `tt.dot` operations in a kernel. Experimental; most values currently have no effect.
+    #
+    # gemm-4waves: enables the gfx950 LLIR scheduler for MFMA GEMM hot loops. It interleaves
+    #            MFMA with memory ops at the LLVM-IR level, disables LLVM's machine schedulers
+    #            (so the LLIR schedule is preserved), and forces MFMA accumulators into AGPR form
+    #            (amdgpu-agpr-alloc=256 + amdgpu-mfma-vgpr-form=0). The pass bails out gracefully
+    #            (leaving backend defaults) on kernels without an eligible main loop.
+    #
+    # Multiple comma-separated values are accepted, e.g. schedule_hint="gemm-4waves".
     schedule_hint: str = ''
 
     # Experimental: intended for development and debugging; may change or be removed without notice.
@@ -520,6 +528,24 @@ class HIPBackend(BaseBackend):
         if knobs.amd.scalarize_packed_fops:
             amd.add_scalarize_packed_fops_llvm_pass(kernel_fn)
 
+        # Run the LLIR scheduler when the user opts in via schedule_hint="gemm-4waves".
+        # The pass models gfx950 MFMA/LDS timing, so it is gated to that target here.
+        # Record whether it actually scheduled this kernel; the pass bails out and
+        # returns False when there is no eligible main loop / MFMA region. make_amdgcn
+        # uses this flag to disable LLVM's machine schedulers only when the LLIR
+        # scheduler took effect (so misched stays enabled if the pass is off or bails).
+        hints = {h.strip().lower() for h in options.schedule_hint.split(",")}
+        metadata["llir_scheduled"] = bool(
+            "gemm-4waves" in hints
+            and options.arch == "gfx950"
+            and amd.add_llir_schedule_pass(kernel_fn))
+
+        # When the LLIR scheduler took effect, force MFMA accumulators into AGPRs to
+        # free VGPRs and avoid spills. The matching cl::opt (amdgpu-mfma-vgpr-form=0)
+        # is set in translate_to_asm, also gated on metadata["llir_scheduled"].
+        if metadata["llir_scheduled"]:
+            kernel_fn.add_fn_attr("amdgpu-agpr-alloc", "256")
+
         # Get some metadata
         metadata["num_warps"] = total_warps_num
         metadata["shared"] = src.get_int_attr("ttg.shared")
@@ -560,8 +586,14 @@ class HIPBackend(BaseBackend):
                                                amd.TARGET_TRIPLE, options.arch, features, flags,
                                                options.enable_fp_fusion, False, knobs.amd.swap_mir_enable_misched)
         else:
+            # When the LLIR scheduler scheduled this kernel (recorded in make_llir),
+            # couple codegen to it: disable LLVM's pre/post-RA machine schedulers so
+            # the LLIR schedule survives codegen, and force MFMA accumulators into
+            # AGPR form (amdgpu-mfma-vgpr-form=0) to pair with the amdgpu-agpr-alloc
+            # attr set in make_llir. Both stay at the LLVM defaults otherwise.
+            scheduled_llir = bool(metadata.get("llir_scheduled", False))
             amdgcn = llvm.translate_to_asm(src, amd.TARGET_TRIPLE, options.arch, features, flags,
-                                           options.enable_fp_fusion, False, False)
+                                           options.enable_fp_fusion, False, False, scheduled_llir)
         if knobs.amd.dump_amdgcn:
             print("// -----// AMDGCN Dump //----- //")
             print(amdgcn)

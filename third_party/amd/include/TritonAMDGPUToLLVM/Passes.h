@@ -30,6 +30,7 @@ createConvertWarpPipelinePass(StringRef gfxArch);
 std::unique_ptr<OperationPass<ModuleOp>>
 createTritonAMDGPUConvertWarpSpecializeToLLVMPass(StringRef gfxArch);
 void runScalarizePackedFOpsPass(llvm::Function &F);
+bool runLLIRSchedulePass(llvm::Function &F);
 
 } // namespace mlir::triton::AMD
 

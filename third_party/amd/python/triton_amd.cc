@@ -554,6 +554,14 @@ void init_triton_amd(py::module &&m) {
     mlir::triton::AMD::runScalarizePackedFOpsPass(*fn);
   });
 
+  m.def("add_llir_schedule_pass", [](llvm::Function *fn) -> bool {
+    // Returns true if the pass actually scheduled (found a main loop).
+    // The caller uses this to disable LLVM's machine schedulers only
+    // when the LLIR scheduler took effect. The Python caller gates this on
+    // the gfx950 target, which the pass's MFMA/LDS timing model assumes.
+    return mlir::triton::AMD::runLLIRSchedulePass(*fn);
+  });
+
   auto hipBlas = m.def_submodule("hipblas");
   // For ROCm installed via TheRock wheels: Preload hipblaslt library via
   // rocm_sdk if available. When using TheRock wheel installs, libhipblaslt

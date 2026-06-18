@@ -1,3 +1,4 @@
+#include "TritonAMDGPUToLLVM/MfmaUtility.h"
 #include "TritonAMDGPUToLLVM/Passes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -11,22 +12,6 @@ using namespace llvm;
 using namespace llvm::PatternMatch;
 
 namespace {
-
-bool isMFMAorWMMA(Instruction &inst) {
-  auto *callInst = llvm::dyn_cast<CallInst>(&inst);
-  if (!callInst)
-    return false;
-  // E.g., tail call void asm sideeffect "s_waitcnt lgkmcnt(0) ", ""()
-  if (callInst->isInlineAsm())
-    return false;
-  Function *calledFunc = callInst->getCalledFunction();
-  if (!calledFunc->isIntrinsic())
-    return false;
-  StringRef intrinName = calledFunc->getName();
-  if (intrinName.contains("mfma") || intrinName.contains("wmma"))
-    return true;
-  return false;
-}
 
 bool maybeReplaceVectorFOpWithScalarFOps(Instruction *inst,
                                          IRBuilder<> &builder) {
@@ -84,7 +69,9 @@ struct ScalarizePackedFOps : FunctionPass {
     bool changed = false;
     SmallVector<Instruction *> instsToErase;
     for (BasicBlock &BB : F) {
-      if (!llvm::any_of(BB, isMFMAorWMMA))
+      if (!llvm::any_of(BB, [](Instruction &inst) {
+            return mlir::triton::AMD::isMFMAorWMMA(inst);
+          }))
         continue;
       for (Instruction &inst : BB) {
         if (inst.getOpcode() != Instruction::FMul &&
