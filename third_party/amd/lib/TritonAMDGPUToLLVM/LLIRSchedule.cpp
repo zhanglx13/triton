@@ -157,8 +157,7 @@ struct Utils {
     StringRef Name = Callee->getName();
 
     // Scaled f8f6f4 MFMAs: the cost depends on the operand formats encoded in
-    // cbsz (arg 3) and blgp (arg 4). A value > 1 selects a sub-byte format
-    // (e2m1 / f4); 1 or 0 selects an f8 (or wider) format.
+    // cbsz (arg 3) and blgp (arg 4).
     if (Name.contains("mfma.scale.f32.16x16x128.f8f6f4")) {
       // both operands f4 -> 16 cycles, otherwise (either operand f8) -> 32.
       if (auto *CbszC = dyn_cast<ConstantInt>(CI->getArgOperand(3)))
@@ -176,10 +175,7 @@ struct Utils {
       return 64; // Fallback if cbsz/blgp are not constants
     }
 
-    // Fixed-cost MFMAs: the cycle count is a function of the intrinsic name
-    // alone, so a small lookup table suffices — add a row to model a new shape.
-    // (".f16" does not substring-match ".bf16", the char after the dot differs,
-    // so the two stay distinct.)
+    // Fixed-cost MFMAs.
     static constexpr struct {
       StringRef Name;
       unsigned Cycles;
@@ -197,10 +193,7 @@ struct Utils {
     return 0;
   }
 
-  // Width in bits of the value moved by an LDS-access anchor — an LR (read) or
-  // an LW (write). An LR is a plain `load` from addrspace(3) or a ds.read/ds.load
-  // intrinsic (the loaded vector type is its result type); an LW is a `store` to
-  // addrspace(3) (the stored value's type carries the width).
+  // Width in bits of the value moved by an LDS-access anchor.
   static unsigned getLDSAccessBits(const Instruction *I) {
     if (const auto *LI = dyn_cast<LoadInst>(I))
       return LI->getType()->getPrimitiveSizeInBits();
@@ -211,26 +204,17 @@ struct Utils {
     return 0;
   }
 
-  // Cycles an LDS access occupies the LDS issue port. A 128-bit ds_read/ds_write
-  // costs 16 cycles and the cost scales linearly with the vector width, so
-  // cycles = LDS_bits / 8. Falls back to one MFMA's worth of cover when the
-  // width can't be determined, which yields a 1:1 MFMA:access pairing.
+  // LDS instruction throughput during steady state, which is proportional to the
+  // access bits.
   static unsigned getLDSCoverCycles(const Instruction *I, unsigned MFMACycles) {
     unsigned Bits = getLDSAccessBits(I);
     return Bits ? (Bits / 8) : MFMACycles;
   }
 
-  // MFMAs to emit at this LDS access (LR or LW) under a pure throughput model.
-  // Reads and writes share the one LDS issue port, so both are paired the same
-  // way: each occupies the port for cycles_per_access cycles while one MFMA
-  // provides MFMACycles of cover. We carry a running cycle balance across the
-  // region's LDS accesses and emit floor(balance / MFMACycles) MFMAs here,
-  // keeping the remainder for the next access. The pairing is therefore the true
-  // cycle ratio: an access cheaper than one MFMA's cover shares an MFMA with its
-  // neighbours (two 8-cycle accesses under one 16-cycle MFMA → 1 MFMA : 2
-  // accesses), while a wide access draws several (a 32-cycle access under a
-  // 16-cycle MFMA → 2 MFMA : 1 access). This is a throughput model only; hiding
-  // the LDS access latency itself is left to the kernel author.
+  // MFMAs to emit at this LDS access under a throughput model: reads and writes
+  // share the one LDS issue port, so we carry a running cycle balance across the
+  // region's accesses and emit floor(balance / MFMACycles) MFMAs here, keeping
+  // the remainder for the next access.
   static unsigned takeMFMAsForLDS(const Instruction *I, unsigned MFMACycles,
                                   unsigned &AccumCycles) {
     AccumCycles += getLDSCoverCycles(I, MFMACycles);
@@ -241,7 +225,6 @@ struct Utils {
 };
 
 // Region analysis and scheduling logic grouped into a helper class
-
 class LLIRScheduler {
 public:
   explicit LLIRScheduler() = default;
@@ -257,16 +240,10 @@ public:
       if (!orig.count(&I))
         inserted.push_back(&I);
     for (Instruction *I : inserted) {
-      // The scheduler only inserts use-free region-comment calls; defensively
-      // drop any stray uses (poison is fine on this discard path) so a future
-      // value-producing insertion can never trip eraseFromParent()'s
-      // "uses remain when a value is destroyed" assertion.
       if (!I->use_empty())
         I->replaceAllUsesWith(PoisonValue::get(I->getType()));
       I->eraseFromParent();
     }
-    // Re-chain the original instructions into their recorded order. snapshot[0]
-    // stays as the anchor; everything else is moved after its predecessor.
     for (size_t i = 1; i < snapshot.size(); ++i)
       snapshot[i]->moveAfter(snapshot[i - 1]);
   }
@@ -556,8 +533,6 @@ private:
     if (MFMAInsts.empty())
       return;
 
-    // gfx950 MFMA cost: 16- or 32-cycle. Bail on an unrecognized MFMA rather
-    // than guessing a spacing for it.
     unsigned mfmaCycles = Utils::getMFMACycles(*MFMAInsts.front());
     if (mfmaCycles == 0)
       return;

@@ -1,4 +1,4 @@
-"""Tests for the gfx950 LLIR pre-RA scheduler.
+"""Tests for the gfx950 LLIR scheduler and its force-agpr opt-in.
 
 The scheduler is an opt-in LLVM-IR FunctionPass: it runs only when the caller
 passes schedule_hint="gemm-4waves" and the target is gfx950. Forcing MFMA
