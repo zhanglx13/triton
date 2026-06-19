@@ -100,12 +100,15 @@ class HIPOptions:
     # for all `tt.dot` operations in a kernel. Experimental; most values currently have no effect.
     #
     # gemm-4waves: enables the gfx950 LLIR scheduler for MFMA GEMM hot loops. It interleaves
-    #            MFMA with memory ops at the LLVM-IR level, disables LLVM's machine schedulers
-    #            (so the LLIR schedule is preserved), and forces MFMA accumulators into AGPR form
-    #            (amdgpu-agpr-alloc=256 + amdgpu-mfma-vgpr-form=0). The pass bails out gracefully
-    #            (leaving backend defaults) on kernels without an eligible main loop.
+    #            MFMA with memory ops at the LLVM-IR level and disables LLVM's machine schedulers
+    #            (so the LLIR schedule is preserved). The pass bails out gracefully (leaving
+    #            backend defaults) on kernels without an eligible main loop.
+    # force-agpr: additional opt-in, only meaningful alongside gemm-4waves. When the scheduler
+    #            took effect, also forces MFMA accumulators into AGPR form
+    #            (amdgpu-agpr-alloc=256 + amdgpu-mfma-vgpr-form=0) to free VGPRs and avoid spills.
+    #            Without it, gemm-4waves leaves register allocation at the backend default.
     #
-    # Multiple comma-separated values are accepted, e.g. schedule_hint="gemm-4waves".
+    # Multiple comma-separated values are accepted, e.g. schedule_hint="gemm-4waves, force-agpr".
     schedule_hint: str = ''
 
     # Experimental: intended for development and debugging; may change or be removed without notice.
@@ -540,10 +543,15 @@ class HIPBackend(BaseBackend):
             and options.arch == "gfx950"
             and amd.add_llir_schedule_pass(kernel_fn))
 
-        # When the LLIR scheduler took effect, force MFMA accumulators into AGPRs to
-        # free VGPRs and avoid spills. The matching cl::opt (amdgpu-mfma-vgpr-form=0)
-        # is set in translate_to_asm, also gated on metadata["llir_scheduled"].
-        if metadata["llir_scheduled"]:
+        # "force-agpr" is an additional opt-in on top of the scheduler: when the LLIR
+        # scheduler took effect AND the caller asked for it, force MFMA accumulators
+        # into AGPRs to free VGPRs and avoid spills. The base "gemm-4waves" hint runs
+        # the scheduler and disables misched, but leaves register allocation alone.
+        metadata["llir_force_agpr"] = bool(metadata["llir_scheduled"] and "force-agpr" in hints)
+
+        # The AGPR-alloc fn-attr is half of the force; its matching cl::opt
+        # (amdgpu-mfma-vgpr-form=0) is set in translate_to_asm, gated on the same flag.
+        if metadata["llir_force_agpr"]:
             kernel_fn.add_fn_attr("amdgpu-agpr-alloc", "256")
 
         # Get some metadata
@@ -587,13 +595,15 @@ class HIPBackend(BaseBackend):
                                                options.enable_fp_fusion, False, knobs.amd.swap_mir_enable_misched)
         else:
             # When the LLIR scheduler scheduled this kernel (recorded in make_llir),
-            # couple codegen to it: disable LLVM's pre/post-RA machine schedulers so
-            # the LLIR schedule survives codegen, and force MFMA accumulators into
-            # AGPR form (amdgpu-mfma-vgpr-form=0) to pair with the amdgpu-agpr-alloc
-            # attr set in make_llir. Both stay at the LLVM defaults otherwise.
-            scheduled_llir = bool(metadata.get("llir_scheduled", False))
+            # disable LLVM's pre/post-RA machine schedulers so the LLIR schedule
+            # survives codegen. Independently, when "force-agpr" was also requested,
+            # force MFMA accumulators into AGPR form (amdgpu-mfma-vgpr-form=0) to pair
+            # with the amdgpu-agpr-alloc attr set in make_llir. Both stay at the LLVM
+            # defaults otherwise.
+            disable_sched = bool(metadata.get("llir_scheduled", False))
+            force_agpr = bool(metadata.get("llir_force_agpr", False))
             amdgcn = llvm.translate_to_asm(src, amd.TARGET_TRIPLE, options.arch, features, flags,
-                                           options.enable_fp_fusion, False, False, scheduled_llir)
+                                           options.enable_fp_fusion, False, False, disable_sched, force_agpr)
         if knobs.amd.dump_amdgcn:
             print("// -----// AMDGCN Dump //----- //")
             print(amdgcn)

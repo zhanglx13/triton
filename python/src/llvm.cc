@@ -332,7 +332,7 @@ std::string translateLLVMIRToASM(
     llvm::Module &module, const std::string &triple, const std::string &proc,
     const std::string &features, const std::vector<std::string> &flags,
     bool enable_fp_fusion, bool isObject, bool canonicalizeGEP,
-    bool scheduledLLIR = false) {
+    bool disableSched = false, bool forceMfmaAgprForm = false) {
   using namespace mlir;
 
   // Apply flags
@@ -357,19 +357,24 @@ std::string translateLLVMIRToASM(
     }
   }
 
-  // When the LLIR scheduler scheduled this kernel (signalled by the caller),
-  // couple codegen to it: force MFMA accumulators into AGPR form (to pair with
-  // the amdgpu-agpr-alloc attr set in make_llir) and disable LLVM's pre/post-RA
-  // machine schedulers so the LLIR instruction order is preserved. RAII so these
-  // process-global cl::opt values are restored when this compile finishes rather
-  // than leaking into later kernels (including the NVIDIA backend in the same
-  // process).
+  // Couple codegen to the LLIR scheduler (signalled by the caller). These are two
+  // independent opt-ins, both RAII so the process-global cl::opt values are
+  // restored when this compile finishes rather than leaking into later kernels
+  // (including the NVIDIA backend in the same process):
+  //   * disableSched: the scheduler took effect, so disable LLVM's pre/post-RA
+  //     machine schedulers and keep the LLIR instruction order through codegen.
+  //   * forceMfmaAgprForm: additionally force MFMA accumulators into AGPR form
+  //     (pairs with the amdgpu-agpr-alloc attr set in make_llir) to free VGPRs.
+  //     This is the opt-in "force-agpr" behavior, requested on top of the
+  //     scheduler; the base "gemm-4waves" hint disables misched only.
   std::optional<ScopedLLVMOption<bool>> mfmaVgprFormGuard, mischedGuard,
       postMischedGuard;
-  if (scheduledLLIR) {
-    mfmaVgprFormGuard.emplace("amdgpu-mfma-vgpr-form", false);
+  if (disableSched) {
     mischedGuard.emplace("enable-misched", false);
     postMischedGuard.emplace("enable-post-misched", false);
+  }
+  if (forceMfmaAgprForm) {
+    mfmaVgprFormGuard.emplace("amdgpu-mfma-vgpr-form", false);
   }
 
   // inline everything
@@ -815,7 +820,7 @@ void init_triton_llvm(py::module &&m) {
       [](std::string llvmIR, std::string triple, std::string proc,
          std::string features, std::vector<std::string> flags,
          bool enable_fp_fusion, bool isObject, bool canonicalizeGEP,
-         bool scheduledLLIR) -> py::object {
+         bool disableSched, bool forceMfmaAgprForm) -> py::object {
         std::string obj;
         {
           // when allow_threads goes out of scope, gil will be released
@@ -834,7 +839,7 @@ void init_triton_llvm(py::module &&m) {
           }
           obj = translateLLVMIRToASM(*module, triple, proc, features, flags,
                                      enable_fp_fusion, isObject, canonicalizeGEP,
-                                     scheduledLLIR);
+                                     disableSched, forceMfmaAgprForm);
         }
         if (isObject)
           return py::bytes(obj);
