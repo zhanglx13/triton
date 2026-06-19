@@ -96,8 +96,8 @@ class HIPOptions:
     backend_name: str = 'hip'
     instrumentation_mode: str = ""
 
-    # The following option provides hints to the AMDGPU backend regarding instruction scheduling
-    # for all `tt.dot` operations in a kernel. Experimental; most values currently have no effect.
+    # Optional, experimental hint controlling how the AMD backend schedules a
+    # kernel's instructions.
     #
     # gemm-4waves: enables the gfx950 LLIR scheduler for MFMA GEMM hot loops. It interleaves
     #            MFMA with memory ops at the LLVM-IR level and disables LLVM's machine schedulers
@@ -531,12 +531,8 @@ class HIPBackend(BaseBackend):
         if knobs.amd.scalarize_packed_fops:
             amd.add_scalarize_packed_fops_llvm_pass(kernel_fn)
 
-        # Run the LLIR scheduler when the user opts in via schedule_hint="gemm-4waves".
-        # The pass models gfx950 MFMA/LDS timing, so it is gated to that target here.
-        # Record whether it actually scheduled this kernel; the pass bails out and
-        # returns False when there is no eligible main loop / MFMA region. make_amdgcn
-        # uses this flag to disable LLVM's machine schedulers only when the LLIR
-        # scheduler took effect (so misched stays enabled if the pass is off or bails).
+        # Run the LLIR scheduler when the user opts in via schedule_hint="gemm-4waves"
+        # (gfx950 only). Record whether it took effect, for the codegen coupling below.
         hints = {h.strip().lower() for h in options.schedule_hint.split(",")}
         metadata["llir_scheduled"] = bool(
             "gemm-4waves" in hints
@@ -594,12 +590,6 @@ class HIPBackend(BaseBackend):
                                                amd.TARGET_TRIPLE, options.arch, features, flags,
                                                options.enable_fp_fusion, False, knobs.amd.swap_mir_enable_misched)
         else:
-            # When the LLIR scheduler scheduled this kernel (recorded in make_llir),
-            # disable LLVM's pre/post-RA machine schedulers so the LLIR schedule
-            # survives codegen. Independently, when "force-agpr" was also requested,
-            # force MFMA accumulators into AGPR form (amdgpu-mfma-vgpr-form=0) to pair
-            # with the amdgpu-agpr-alloc attr set in make_llir. Both stay at the LLVM
-            # defaults otherwise.
             disable_sched = bool(metadata.get("llir_scheduled", False))
             force_agpr = bool(metadata.get("llir_force_agpr", False))
             amdgcn = llvm.translate_to_asm(src, amd.TARGET_TRIPLE, options.arch, features, flags,

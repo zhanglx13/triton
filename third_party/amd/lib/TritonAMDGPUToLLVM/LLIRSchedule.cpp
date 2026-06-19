@@ -1,10 +1,11 @@
-//===- LLIRSchedule.cpp - gfx950 pre-RA MFMA scheduler --------------------===//
+//===- LLIRSchedule.cpp - gfx950 LLIR scheduler ---------------------------===//
 //
 // An LLVM-IR FunctionPass that interleaves MFMA matrix-core instructions with
-// the LDS / global memory ops that feed them, so the matrix unit stays busy
-// across a GEMM's hot loop. It runs before register allocation and is opt-in:
-// the Python compiler invokes it only for gfx950 and only when the caller
-// passes schedule_hint="gemm-4waves" (see HIPBackend.make_llir).
+// memory ops that are independent of them (not the loads that feed those very
+// MFMAs), so the matrix unit stays busy across a GEMM's hot loop. It runs before
+// register allocation and is opt-in: the Python compiler invokes it only for
+// gfx950 and only when the caller passes schedule_hint="gemm-4waves" (see
+// HIPBackend.make_llir).
 //
 // Outline:
 //   * analyzeBBMFMA  - split each block into regions; a region boundary is an
@@ -47,21 +48,18 @@ namespace {
 using namespace llvm;
 
 // Classification of an instruction for scheduling purposes.
-
 enum class SchedKind { MFMA, GR, LR, LW, Other };
 
 // LDS resides in address space 3 on AMDGPU.
 constexpr unsigned kLDSAddressSpace = 3;
 
 // Structures used for region analysis/scheduling
-
 struct AnchorInst {
   Instruction *I = nullptr;
   SchedKind Kind = SchedKind::Other;
 };
 
 struct MFMARegionInfo {
-  // The region's first MFMA; not an s.barrier, despite the historical field name.
   Instruction *RegionStart = nullptr;
   unsigned TotalMFMA = 0;
 };
@@ -85,7 +83,6 @@ struct MFMARegionCollectResult {
 };
 
 // Utilities grouped for clarity
-
 struct Utils {
   static bool isMFMAorWMMA(const Instruction &I) {
     // Shared matrix-core predicate (also used by the scalarize-packed-fops
@@ -163,10 +160,10 @@ struct Utils {
     // cbsz (arg 3) and blgp (arg 4). A value > 1 selects a sub-byte format
     // (e2m1 / f4); 1 or 0 selects an f8 (or wider) format.
     if (Name.contains("mfma.scale.f32.16x16x128.f8f6f4")) {
-      // f4 input (either operand sub-byte) -> 16 cycles, otherwise f8 -> 32.
+      // both operands f4 -> 16 cycles, otherwise (either operand f8) -> 32.
       if (auto *CbszC = dyn_cast<ConstantInt>(CI->getArgOperand(3)))
         if (auto *BlgpC = dyn_cast<ConstantInt>(CI->getArgOperand(4)))
-          return (CbszC->getZExtValue() > 1 || BlgpC->getZExtValue() > 1) ? 16
+          return (CbszC->getZExtValue() > 1 && BlgpC->getZExtValue() > 1) ? 16
                                                                           : 32;
       return 32; // Fallback if cbsz/blgp are not constants
     }

@@ -357,16 +357,6 @@ std::string translateLLVMIRToASM(
     }
   }
 
-  // Couple codegen to the LLIR scheduler (signalled by the caller). These are two
-  // independent opt-ins, both RAII so the process-global cl::opt values are
-  // restored when this compile finishes rather than leaking into later kernels
-  // (including the NVIDIA backend in the same process):
-  //   * disableSched: the scheduler took effect, so disable LLVM's pre/post-RA
-  //     machine schedulers and keep the LLIR instruction order through codegen.
-  //   * forceMfmaAgprForm: additionally force MFMA accumulators into AGPR form
-  //     (pairs with the amdgpu-agpr-alloc attr set in make_llir) to free VGPRs.
-  //     This is the opt-in "force-agpr" behavior, requested on top of the
-  //     scheduler; the base "gemm-4waves" hint disables misched only.
   std::optional<ScopedLLVMOption<bool>> mfmaVgprFormGuard, mischedGuard,
       postMischedGuard;
   if (disableSched) {

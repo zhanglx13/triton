@@ -8,9 +8,6 @@
 
 namespace mlir::triton::AMD {
 
-// True iff `I` is an AMDGPU matrix-core intrinsic call (MFMA or WMMA). A given
-// target exposes only one of the two families, so callers never need to tell
-// them apart. Inline-asm calls and non-intrinsic calls are rejected.
 inline bool isMFMAorWMMA(const llvm::Instruction &I) {
   const auto *CI = llvm::dyn_cast<llvm::CallInst>(&I);
   if (!CI || CI->isInlineAsm())
