@@ -411,15 +411,15 @@ private:
     //  • Cluster 0 is a special case: if no top-of-loop barrier existed,
     //    the first cluster barrier must be inserted just before the loop’s
     //    terminator, forming the wrap-around dependency.
+    // PROTOTYPE(top-barrier): place the loop-carried wrap-around barrier
+    // (cluster 0, no pre-existing top barrier) at the TOP of the loop body
+    // (before cluster 0) instead of just before the yield. The top barrier's
+    // setprio primes cluster 0's priority every iteration, so the separate
+    // before-loop priming is dropped. Effect: the loop-control (induction /
+    // back-edge) runs after the last stage with no trailing barrier, and the
+    // first stage's MFMA leads the region right after the top barrier.
+    (void)terminatorOp;
     for (int i = 0; i < numClusters; i++) {
-      if (i == 0 && !hasTopBarrier) {
-        // Prime the first iteration's priority.  The loop-carried cluster-0
-        // barrier sits at the bottom of the loop body, so it only controls
-        // the next iteration.
-        b.setInsertionPoint(forOp);
-        emitClusterPriority(b, loc, clusterOps[i], anyHasPriority);
-      }
-
       if (auto exBar = existingBarrierMap.find(i);
           exBar != existingBarrierMap.end()) {
         // FIXME: If bars[i] is true, wrapping a non-LOCAL pre-existing
@@ -429,12 +429,8 @@ private:
         wrapExistingBarrier(b, loc, clusterOps[i], exBar->second,
                             anyHasPriority);
       } else {
+        // before cluster i (i == 0 -> top of the loop body)
         b.setInsertionPoint(clusterOps[i]);
-        // The first one wraps back to the last of the loop
-        if (i == 0 && !hasTopBarrier) {
-          // inserts just before yield (=End of the loop).
-          b.setInsertionPoint(terminatorOp);
-        }
         emitClusterPriority(b, loc, clusterOps[i], anyHasPriority);
         emitClusterBarrier(b, loc, /*needLocal=*/bars[i]);
       }
