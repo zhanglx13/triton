@@ -265,6 +265,97 @@ static void emitClusterPriority(OpBuilder &r, Location loc,
   }
 }
 
+// PROTOTYPE(dot-coissue / Path A): inside a DOT stage cluster, emit an
+// over-provisioned SCHED_GROUP_BARRIER sequence  [MFMA 1][VALU K] x N  at the
+// very top of the cluster's region.  The AMDGPU IGroupLP machine-scheduler
+// mutation then interleaves each MFMA with ~K co-issuable VALU ops — the
+// optimal "MFMA || 6-unpacked" schedule proven in mfma_coissue_scheduling.md.
+//
+// This pass runs BEFORE tt.dot -> MFMA lowering, so we do not yet know the exact
+// MFMA count and over-provision N; groups the solver cannot fill are dropped.
+// VALU ops are still unpacked here (packing is the late SIPreEmitPeephole
+// peephole), so a VALU group fills with unpacked math — exactly the ops we want
+// hidden under the MFMA co-issue window.
+//
+// Env-gated so the change is inert unless explicitly enabled:
+//   TRITON_HIP_DOT_COISSUE=1        enable
+//   TRITON_HIP_DOT_COISSUE_VALU=K   VALU ops per MFMA group   (default 6)
+//   TRITON_HIP_DOT_COISSUE_NMFMA=N  MFMA groups (over-provision, default 24)
+// Uses raw getenv (not triton's whitelisted getBoolEnv) to keep the knob local
+// to this prototype.
+//
+// Strategy = "even interleave": spread the region's co-issuable VALU evenly
+// across its MFMAs so the MFMA cadence stays uniform (no end-of-stage leftover
+// -> no cool-down / jump-start stall). Per-MFMA group is
+//     [MFMA 1] [VALU k_valu] [TRANS k_trans]
+//
+// MEASURED (1x16320, scalarized): the count-matched "K = round(V/M) per region
+// with a separate TRANS group for v_exp" idea does NOT win — a uniform
+// OVER-demand (VALU 8 for both DOT1 and DOT2, no TRANS group) is best (~1066):
+//   - Lowering DOT2 VALU to its true count (~4) is WORSE (1057) than demanding 8.
+//     Over-demanding is what forces the tail to zero; matching the count leaves
+//     a tail. So the right knob is "demand more than available", not "match V/M".
+//   - Grouping the transcendentals with a TRANS mask is WORSE (VALU8+TRANS2 =
+//     1052; +TRANS1 = 1016). v_exp carries softmax dependency chains; pinning it
+//     to a rigid per-MFMA cadence fights the scheduler. Leave it to float — the
+//     VALU mask already excludes it, so a plain [VALU K] never touches it.
+// Hence the defaults: VALU 8 for both stages, TRANS 0. The per-stage / TRANS
+// knobs are retained for experimentation only.
+static void emitDotCoIssueGroups(OpBuilder &b, Location loc, Block *clusterBlock,
+                                 StringRef stage) {
+  const char *en = std::getenv("TRITON_HIP_DOT_COISSUE");
+  if (!en || en[0] == '0' || en[0] == '\0')
+    return;
+  auto intEnv = [](const char *name, int dflt) -> int {
+    if (const char *v = std::getenv(name)) {
+      int x = std::atoi(v);
+      if (x >= 0)
+        return x;
+    }
+    return dflt;
+  };
+  // SCHED_GROUP_BARRIER groups are formed by searching UPWARD from the barrier,
+  // so the sequence sits at the END of the region. OpBuilder advances past each
+  // new op, so sequential creates keep forward order.
+  b.setInsertionPoint(clusterBlock->getTerminator());
+  const uint32_t syncId = 0;
+  auto emitGroup = [&](ROCDL::SchedGroupMask mask, int size) {
+    ROCDL::SchedGroupBarrier::create(b, loc, ROCDL::SchedGroupMask::mfma_wmma,
+                                     /*size=*/1u, syncId);
+    if (size > 0)
+      ROCDL::SchedGroupBarrier::create(b, loc, mask, (uint32_t)size, syncId);
+  };
+  if (stage.starts_with("dot1")) { // QK: no transcendentals -> uniform [MFMA][VALU K]
+    const int kValu = intEnv("TRITON_HIP_DOT1_VALU", 8);
+    const int nGroups = intEnv("TRITON_HIP_DOT_COISSUE_NMFMA", 24);
+    for (int j = 0; j < nGroups; ++j)
+      emitGroup(ROCDL::SchedGroupMask::valu, kValu);
+  } else {
+    // dot2 / PV: SPLIT the MFMAs — some cover VALU, others cover exp, so each
+    // MFMA gets a homogeneous co-execute load and the cadence stays uniform in
+    // *cycles* (K2 exp @ 8cyc == K1 valu @ 4cyc when K2 = K1/2). group0 MFMAs
+    // take [VALU K1]; group1 = M-group0 take [TRANS K2]. Derived (LZ): pretend
+    // 1 exp = 2 valu, K1 = round((V + 2E)/M), K2 = K1/2, group0 = round(V/K1).
+    //   focus shape (M16, V54, E33): K1=8, K2=4, group0=7, group1=9.
+    const int k1 = intEnv("TRITON_HIP_DOT2_VALU", 8);
+    const int k2 = intEnv("TRITON_HIP_DOT2_TRANS", 4);
+    const int g0 = intEnv("TRITON_HIP_DOT2_G0", 7);  // VALU-covering MFMAs
+    const int g1 = intEnv("TRITON_HIP_DOT2_G1", 9);  // exp-covering MFMAs
+    const bool expFirst = intEnv("TRITON_HIP_DOT2_EXPFIRST", 0) != 0;
+    if (expFirst) {
+      for (int j = 0; j < g1; ++j)
+        emitGroup(ROCDL::SchedGroupMask::transcendental, k2);
+      for (int j = 0; j < g0; ++j)
+        emitGroup(ROCDL::SchedGroupMask::valu, k1);
+    } else {
+      for (int j = 0; j < g0; ++j)
+        emitGroup(ROCDL::SchedGroupMask::valu, k1);
+      for (int j = 0; j < g1; ++j)
+        emitGroup(ROCDL::SchedGroupMask::transcendental, k2);
+    }
+  }
+}
+
 // Wrap a pre-existing barrier op (e.g. async_wait) with sched_barriers so the
 // backend scheduler cannot move ops across it, and emit the cluster's
 // priority just before the barrier.  Used in place of inserting a fresh
@@ -435,6 +526,18 @@ private:
         emitClusterBarrier(b, loc, /*needLocal=*/bars[i]);
       }
     }
+
+    // PROTOTYPE(dot-coissue / Path A): inside each DOT stage cluster, inject
+    // per-MFMA co-issue scheduling groups so the machine scheduler interleaves
+    // MFMAs with unpacked VALU (see emitDotCoIssueGroups). Env-gated; inert by
+    // default.
+    for (int i = 0; i < numClusters; i++) {
+      auto stage = clusterOps[i]->getAttrOfType<StringAttr>(
+          "triton.warp_pipeline.stage");
+      if (stage && stage.getValue().starts_with("dot"))
+        emitDotCoIssueGroups(b, loc, clusterBlocks[i], stage.getValue());
+    }
+
 
     // 5. Post-loop priority reset and reconverge.
     b.setInsertionPointAfter(forOp);
