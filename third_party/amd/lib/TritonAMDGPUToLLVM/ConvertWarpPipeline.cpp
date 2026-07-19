@@ -39,6 +39,8 @@
 #include "third_party/amd/include/Dialect/TritonAMDGPU/IR/Dialect.h"
 #include "triton/Analysis/Membar.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+
+#include <cstdlib>
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
@@ -303,6 +305,77 @@ static void emitClusterPriority(OpBuilder &r, Location loc,
 //     VALU mask already excludes it, so a plain [VALU K] never touches it.
 // Hence the defaults: VALU 8 for both stages, TRANS 0. The per-stage / TRANS
 // knobs are retained for experimentation only.
+// Auto-derive the split parameters from the TTGIR region (no hardcoding).
+//   M = #MFMA of the region's tt.dot(s), from instr_shape + warpsPerCTA + tile:
+//       numRepM*numRepN*numRepK, no kWidth needed.
+//   V = Sum getTotalElemsPerThread over co-issuable VALU elementwise ops, PLUS a
+//       tt.reduce term: opsPerCombine * (elemsPerThread(in) - elemsPerThread(out))
+//       — the intra-thread combine chain (add/mul reduce -> 1 op/combine;
+//       max/min -> the 2-3 ops its combine region expands to).
+//   E = Sum getTotalElemsPerThread over transcendental (exp) ops.
+struct DotStageCounts {
+  int M = 0, V = 0, E = 0;
+};
+static DotStageCounts countDotStage(Block *clusterBlock) {
+  DotStageCounts c;
+  auto elems = [](Type t) -> int {
+    if (auto rt = dyn_cast<RankedTensorType>(t))
+      return (int)triton::gpu::getTotalElemsPerThread(rt);
+    return 0;
+  };
+  clusterBlock->walk([&](Operation *op) {
+    if (auto dot = dyn_cast<mlir::triton::DotOp>(op)) {
+      auto aTy = dyn_cast<RankedTensorType>(dot.getA().getType());
+      auto dTy = dyn_cast<RankedTensorType>(dot.getType());
+      if (!aTy || !dTy)
+        return;
+      auto mfma = dyn_cast<triton::gpu::AMDMfmaEncodingAttr>(dTy.getEncoding());
+      if (!mfma)
+        return;
+      ArrayRef<unsigned> instr = mfma.getInstrShape();   // [mDim, nDim, kDim]
+      ArrayRef<unsigned> warps = mfma.getWarpsPerCTA();  // [warpsM, warpsN]
+      auto dShape = dTy.getShape();
+      if (instr.size() < 3 || warps.size() < 2 || dShape.size() < 2 ||
+          instr[0] == 0 || instr[1] == 0 || instr[2] == 0)
+        return;
+      int64_t tileM = dShape[dShape.size() - 2];
+      int64_t tileN = dShape[dShape.size() - 1];
+      int64_t Kdim = aTy.getShape().back(); // contraction dim
+      auto cdiv = [](int64_t a, int64_t b) { return b > 0 ? (a + b - 1) / b : 0; };
+      int64_t repM = cdiv(tileM, (int64_t)instr[0] * warps[0]);
+      int64_t repN = cdiv(tileN, (int64_t)instr[1] * warps[1]);
+      int64_t repK = Kdim / (int64_t)instr[2];
+      c.M += (int)(repM * repN * repK);
+    } else if (isa<math::Exp2Op, math::ExpOp>(op)) {
+      c.E += elems(op->getResult(0).getType());
+    } else if (auto red = dyn_cast<mlir::triton::ReduceOp>(op)) {
+      // The reduce term (opt-in) OVER-counts: (inE-outE) assumes register
+      // combines, but these reductions are mostly cross-lane shuffles (not
+      // 4-cyc VALU), so it inflates V and pushes K1 high. Off by default.
+      if (!std::getenv("TRITON_HIP_COISSUE_REDUCE"))
+        return;
+      int opsPerCombine = 0;
+      op->getRegion(0).walk([&](Operation *cop) {
+        if (isa<arith::AddFOp, arith::MulFOp, arith::SubFOp, arith::MaximumFOp,
+                arith::MaxNumFOp, arith::MinimumFOp, arith::MinNumFOp,
+                arith::DivFOp, arith::CmpFOp, arith::SelectOp>(cop))
+          opsPerCombine++;
+      });
+      int inE = op->getNumOperands() > 0 ? elems(op->getOperand(0).getType()) : 0;
+      int outE = op->getNumResults() > 0 ? elems(op->getResult(0).getType()) : 0;
+      c.V += opsPerCombine * std::max(0, inE - outE);
+    } else if (isa<arith::MulFOp, arith::AddFOp, arith::SubFOp, arith::TruncFOp,
+                   arith::ExtFOp, arith::MaximumFOp, arith::MaxNumFOp,
+                   arith::MinimumFOp, arith::MinNumFOp, arith::DivFOp,
+                   math::FmaOp>(op)) {
+      // Scalars inside reduce combine regions have no tensor type -> elems()==0,
+      // so they are naturally excluded here (counted via the reduce term above).
+      c.V += elems(op->getResult(0).getType());
+    }
+  });
+  return c;
+}
+
 static void emitDotCoIssueGroups(OpBuilder &b, Location loc, Block *clusterBlock,
                                  StringRef stage) {
   const char *en = std::getenv("TRITON_HIP_DOT_COISSUE");
@@ -327,6 +400,35 @@ static void emitDotCoIssueGroups(OpBuilder &b, Location loc, Block *clusterBlock
     if (size > 0)
       ROCDL::SchedGroupBarrier::create(b, loc, mask, (uint32_t)size, syncId);
   };
+  // Auto-derived split (TRITON_HIP_DOT_COISSUE_AUTO=1): compute M,V,E from the
+  // TTGIR region and derive K1/K2/g0/g1, instead of the hardcoded reference.
+  if (const char *au = std::getenv("TRITON_HIP_DOT_COISSUE_AUTO");
+      au && au[0] == '1') {
+    DotStageCounts c = countDotStage(clusterBlock);
+    if (c.M <= 0)
+      return;
+    auto ceilDiv = [](int a, int d) { return (a + d - 1) / d; };
+    int K1 = std::max(1, ceilDiv(c.V + 2 * c.E, c.M));
+    llvm::errs() << "[dot-coissue auto] stage=" << stage << " M=" << c.M
+                 << " V=" << c.V << " E=" << c.E << " K1=" << K1;
+    if (c.E == 0) {
+      llvm::errs() << " -> [VALU " << K1 << "] x" << c.M << "\n";
+      for (int j = 0; j < c.M; ++j)
+        emitGroup(ROCDL::SchedGroupMask::valu, K1);
+    } else {
+      int K2 = std::max(1, ceilDiv(K1, 2));
+      int g0 = std::min(c.M, std::max(1, (c.V + K1 / 2) / K1)); // round(V/K1)
+      int g1 = c.M - g0;
+      llvm::errs() << " K2=" << K2 << " g0=" << g0 << " g1=" << g1
+                   << " -> [VALU " << K1 << "]x" << g0 << " + [TRANS " << K2
+                   << "]x" << g1 << "\n";
+      for (int j = 0; j < g0; ++j)
+        emitGroup(ROCDL::SchedGroupMask::valu, K1);
+      for (int j = 0; j < g1; ++j)
+        emitGroup(ROCDL::SchedGroupMask::transcendental, K2);
+    }
+    return;
+  }
   if (stage.starts_with("dot1")) { // QK: no transcendentals -> uniform [MFMA][VALU K]
     const int kValu = intEnv("TRITON_HIP_DOT1_VALU", 8);
     const int nGroups = intEnv("TRITON_HIP_DOT_COISSUE_NMFMA", 24);
@@ -539,7 +641,6 @@ private:
       if (stage && stage.getValue().starts_with("dot"))
         emitDotCoIssueGroups(b, loc, clusterBlocks[i], stage.getValue());
     }
-
 
     // 5. Post-loop priority reset and reconverge.
     b.setInsertionPointAfter(forOp);
