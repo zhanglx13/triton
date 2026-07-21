@@ -239,6 +239,10 @@ static void analyzePipelineDependencies(ArrayRef<BlockInfo> clusterInfo,
               clusterInfo[dst], mlir::triton::AMD::membarFilter, allocation))
         continue;
       bars[barrierLoc] = true;
+      if (std::getenv("TRITON_WP_DEBUG"))
+        llvm::errs() << "[wp] LDS hazard: cluster " << src << " -> cluster "
+                     << dst << " (dist " << dist << ") => LOCAL barrier at slot "
+                     << barrierLoc << "\n";
       LDBG("cluster " << src << " need fence to " << dst
                       << " placing barrier at " << barrierLoc);
     }
@@ -396,9 +400,24 @@ private:
       existingBarrierMap.erase(bottomBar);
     }
 
+    if (std::getenv("TRITON_WP_DEBUG")) {
+      for (int i = 0; i < numClusters; i++) {
+        llvm::errs() << "[wp] cluster " << i << " stage=";
+        if (auto s = clusterOps[i]->getAttrOfType<StringAttr>(
+                "triton.warp_pipeline.stage"))
+          llvm::errs() << s.getValue();
+        llvm::errs() << " LDS-effects:\n";
+        clusterInfo[i].dump();
+      }
+    }
+
     // 3. Circular dependency analysis (wrap-around for loop pipelines).
     analyzePipelineDependencies(clusterInfo, bars, allocation,
                                 /*circular=*/true);
+    if (std::getenv("TRITON_WP_DEBUG"))
+      for (int i = 0; i < numClusters; i++)
+        llvm::errs() << "[wp] cluster " << i
+                     << " needLocal(barrier-before-it)=" << bars[i] << "\n";
 
     // 4. Materializing final cluster-scope barriers.  For each cluster index:
     //  • If there is a pre-existing barrier at that location, we wrap it with
@@ -432,7 +451,20 @@ private:
         // before cluster i (i == 0 -> top of the loop body)
         b.setInsertionPoint(clusterOps[i]);
         emitClusterPriority(b, loc, clusterOps[i], anyHasPriority);
-        emitClusterBarrier(b, loc, /*needLocal=*/bars[i]);
+        // Always emit a LOCAL cluster barrier (ds_wait + s_barrier ->
+        // "lgkmcnt(0); s_barrier"), never a bare s_barrier. LOCAL strictly
+        // dominates bare, so this is always correctness-safe. `bars[i]` (from
+        // analyzePipelineDependencies) is the *minimal* set of slots that need a
+        // LOCAL barrier; emitting LOCAL everywhere is a superset. The reason is
+        // performance: a bare barrier lets the backend hoist a progressive
+        // s_waitcnt lgkmcnt(N..0) into the following MFMA stage, and each wait
+        // costs a 4-cyc MFMA co-exec slot and stalls the matrix unit (di/dt).
+        // A LOCAL barrier instead drains once with a single lgkmcnt(0) at the
+        // mem-stage end, hidden by inter-wave scheduling (measured +21 TFLOPS /
+        // +4.8pp MFMA-eff on the gfx950 FAv3 kernel). The DOT clusters have no
+        // LDS effects, so the extra barriers only order the mem clusters, which
+        // the minimal placement already had to do -- just at an arbitrary slot.
+        emitClusterBarrier(b, loc, /*needLocal=*/true);
       }
     }
 
