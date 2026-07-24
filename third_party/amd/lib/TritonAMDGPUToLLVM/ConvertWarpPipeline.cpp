@@ -451,15 +451,31 @@ private:
         // before cluster i (i == 0 -> top of the loop body)
         b.setInsertionPoint(clusterOps[i]);
         emitClusterPriority(b, loc, clusterOps[i], anyHasPriority);
-        // TRITON_WP_QK_DRAIN: the wrap-around barrier (cluster 0, no pre-existing
-        // top barrier) sits at the loop header, where the LOCAL release fence can't
-        // materialize lgkmcnt(0) for the backedge-carried LDS reads -- so they leak
-        // into the QK stage as a staggered s_waitcnt lgkmcnt(N..0). Emit an EXPLICIT
-        // s_waitcnt lgkmcnt(0) right before the barrier so the read drain lands at
-        // the mem->dot boundary (after the loop-control s_xxx) and the mfma stage
-        // stays clean. gfx9 encoding: vmcnt/expcnt max, lgkmcnt=0 -> 0xC07F.
-        if (i == 0 && !hasTopBarrier && std::getenv("TRITON_WP_QK_DRAIN"))
-          ROCDL::SWaitcntOp::create(b, loc, 0xC07F);
+        // Wrap-around slot (cluster 0, no pre-existing top barrier): force a HARD
+        // LDS drain here.
+        //
+        // The LOCAL barrier's release fence *does* ask for the drain, but
+        // SIMemoryLegalizer materializes it as S_WAITCNT_soft -- an ADVISORY wait
+        // that SIInsertWaitcnts may relax. At every other cluster boundary the
+        // soft wait survives as s_waitcnt lgkmcnt(0), but at the loop header
+        // SIInsertWaitcnts deletes it and re-places minimal per-consumer waits
+        // instead (lgkmcnt(14), 13, 12, ... before each mfma), because the first
+        // mfma only needs 2 of the 16 backedge-carried ds_reads. The result is a
+        // staggered s_waitcnt stream *inside* the first (MFMA) stage.
+        //
+        // No fence/barrier can prevent that -- everything the memory model emits
+        // is soft. So emit an explicit amdgpu.memory_counter_wait(ds = 0), which
+        // lowers to a HARD s_waitcnt (lgkmcnt(0) on gfx9, s_wait_dscnt 0 on
+        // gfx12+) that SIInsertWaitcnts must honor. The drain then lands at the
+        // mem->dot boundary, right before the barrier and after the loop-control
+        // scalars, leaving the MFMA stage free of any lgkmcnt.
+        //
+        // Set TRITON_WP_NO_WRAP_DRAIN to opt out (restores the staggered form).
+        if (i == 0 && !hasTopBarrier &&
+            !std::getenv("TRITON_WP_NO_WRAP_DRAIN"))
+          mlir::triton::amdgpu::MemoryCounterWaitOp::create(
+              b, loc, /*load=*/nullptr, /*store=*/nullptr,
+              /*ds=*/b.getI32IntegerAttr(0));
         // Always emit a LOCAL cluster barrier (ds_wait + s_barrier ->
         // "lgkmcnt(0); s_barrier"), never a bare s_barrier. LOCAL strictly
         // dominates bare, so this is always correctness-safe. `bars[i]` (from
