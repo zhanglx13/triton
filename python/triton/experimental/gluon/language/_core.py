@@ -685,7 +685,7 @@ def warp_specialize(functions_and_args, worker_num_warps, worker_num_regs=None, 
 
 
 @builtin
-def warp_predicate(predicate, inits, body, args=(), _semantic=None, _generator=None):
+def warp_predicate(predicate, inits, body, args=(), unlikely=False, _semantic=None, _generator=None):
     """
     Run ``body(*inits)`` under a per-lane predicate (per-wave masked skip).
 
@@ -700,6 +700,8 @@ def warp_predicate(predicate, inits, body, args=(), _semantic=None, _generator=N
         inits (tuple): carried values, kept for the false lanes.
         body (Callable): ``body(*inits)`` returning the updated values (types
             must match ``inits``), emitted into the predicated region.
+        unlikely (bool): hint that the region is typically skipped. Attaches
+            cold branch weights so block placement lays the body out of line.
 
     Returns:
         The per-lane merge of the body's yields (true lanes) and ``inits``
@@ -713,7 +715,8 @@ def warp_predicate(predicate, inits, body, args=(), _semantic=None, _generator=N
         inits = (inits, )
     if not isinstance(args, seq_types):
         args = (args, )
-    return _semantic.warp_predicate(predicate, inits, body, _generator, args)
+    return _semantic.warp_predicate(predicate, inits, body, _generator, args,
+                                    bool(_unwrap_if_constexpr(unlikely)))
 
 
 @builtin

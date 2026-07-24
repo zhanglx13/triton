@@ -201,6 +201,9 @@ static LogicalResult lowerOneWarpPredicate(WarpPredicateOp op) {
   IRRewriter rw(op->getContext());
   rw.setInsertionPoint(op);
 
+  // Whether the body is hinted unlikely (captured before the op is erased).
+  bool unlikely = op.getUnlikely();
+
   // Follow a 1:1 unrealized_conversion_cast to its source value.
   auto asLLVM = [](Value v) -> Value {
     if (auto c = v.getDefiningOp<UnrealizedConversionCastOp>())
@@ -264,8 +267,15 @@ static LogicalResult lowerOneWarpPredicate(WarpPredicateOp op) {
 
   // Divergent branch: true lanes run the body, false lanes carry inits.
   rw.setInsertionPointToEnd(curBlock);
-  cf::CondBranchOp::create(rw, loc, lanePred, bodyBlock, ValueRange{},
-                           mergeBlock, ValueRange(initStructs));
+  auto condBr = cf::CondBranchOp::create(rw, loc, lanePred, bodyBlock,
+                                         ValueRange{}, mergeBlock,
+                                         ValueRange(initStructs));
+  // When the region is hinted unlikely (gl.warp_predicate(..., unlikely=True)),
+  // mark the branch cold so MachineBlockPlacement gets a real branch probability
+  // (instead of ~50/50) and lays the region's then-block out of line. Weights
+  // [1, 2000] match __builtin_expect / llvm.expect defaults.
+  if (unlikely)
+    condBr.setBranchWeightsAttr(rw.getDenseI32ArrayAttr({1, 2000}));
   return success();
 }
 

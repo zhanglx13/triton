@@ -747,7 +747,8 @@ def TTG_WarpPredicateOp : TTG_Op<"warp_predicate", [
     is terminated by `ttg.predicate_yield`.
   }];
 
-  let arguments = (ins TT_BoolTensor:$predicate, Variadic<AnyType>:$inits);
+  let arguments = (ins TT_BoolTensor:$predicate, Variadic<AnyType>:$inits,
+                   UnitAttr:$unlikely);
   let results = (outs Variadic<AnyType>:$results);
   let regions = (region SizedRegion<1>:$region);
 

@@ -644,7 +644,7 @@ class GluonSemantic(TritonSemantic[TensorTy]):
         mlir_results = [ws_op.get_result(i) for i in range(len(result_types))]
         return next(unflatten_ir_values(mlir_results, [default_result.type]))
 
-    def warp_predicate(self, predicate, inits, body, generator, args=()):
+    def warp_predicate(self, predicate, inits, body, generator, args=(), unlikely=False):
         # Per-wave masked region: run body(*inits, *args) with the exec mask
         # restricted to lanes where `predicate` is true; the whole region is
         # skipped for any wavefront where no lane has the predicate set (no
@@ -670,7 +670,7 @@ class GluonSemantic(TritonSemantic[TensorTy]):
         builder.restore_insertion_point(insert_pt)
         pred_ir = flatten_values_to_ir([predicate])[0]
         init_ir = flatten_values_to_ir(inits)
-        wp_op = builder.create_warp_predicate(result_types, pred_ir, init_ir)
+        wp_op = builder.create_warp_predicate(result_types, pred_ir, init_ir, unlikely)
         wp_op.get_region(0).push_back(region_block)
 
         builder.set_insertion_point_after(wp_op)

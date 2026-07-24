@@ -1063,9 +1063,13 @@ void init_gluon_ir(py::module_ &m) {
            })
       .def("create_warp_predicate",
            [](GluonOpBuilder &self, std::vector<Type> &resultTypes,
-              Value predicate, std::vector<Value> &inits) -> Operation * {
-             return self.create<ttg::WarpPredicateOp>(resultTypes, predicate,
-                                                      inits);
+              Value predicate, std::vector<Value> &inits,
+              bool unlikely) -> Operation * {
+             auto op = self.create<ttg::WarpPredicateOp>(resultTypes, predicate,
+                                                         inits);
+             if (unlikely)
+               op->setAttr("unlikely", self.getBuilder().getUnitAttr());
+             return op;
            },
            ret::reference)
       .def(
