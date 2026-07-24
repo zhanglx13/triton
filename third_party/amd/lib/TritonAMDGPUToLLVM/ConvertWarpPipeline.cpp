@@ -451,6 +451,15 @@ private:
         // before cluster i (i == 0 -> top of the loop body)
         b.setInsertionPoint(clusterOps[i]);
         emitClusterPriority(b, loc, clusterOps[i], anyHasPriority);
+        // TRITON_WP_QK_DRAIN: the wrap-around barrier (cluster 0, no pre-existing
+        // top barrier) sits at the loop header, where the LOCAL release fence can't
+        // materialize lgkmcnt(0) for the backedge-carried LDS reads -- so they leak
+        // into the QK stage as a staggered s_waitcnt lgkmcnt(N..0). Emit an EXPLICIT
+        // s_waitcnt lgkmcnt(0) right before the barrier so the read drain lands at
+        // the mem->dot boundary (after the loop-control s_xxx) and the mfma stage
+        // stays clean. gfx9 encoding: vmcnt/expcnt max, lgkmcnt=0 -> 0xC07F.
+        if (i == 0 && !hasTopBarrier && std::getenv("TRITON_WP_QK_DRAIN"))
+          ROCDL::SWaitcntOp::create(b, loc, 0xC07F);
         // Always emit a LOCAL cluster barrier (ds_wait + s_barrier ->
         // "lgkmcnt(0); s_barrier"), never a bare s_barrier. LOCAL strictly
         // dominates bare, so this is always correctness-safe. `bars[i]` (from
