@@ -97,6 +97,22 @@ std::string setLLVMOption<std::string>(const std::string &name,
   return original;
 }
 
+// Set an LLVM command-line option from a string, going through the option's own
+// parser. Unlike setLLVMOption<T> this does not cast to cl::opt<T>, so it also
+// works for options whose value type is not bool/std::string -- e.g. -pre-RA-sched,
+// which is a cl::opt<RegisterScheduler::FunctionPassCtor> parsed by
+// RegisterPassParser. Returns false if no such option is registered.
+static bool setLLVMOptionFromString(const std::string &name,
+                                    const std::string &value) {
+  auto options = llvm::cl::getRegisteredOptions();
+  auto it = options.find(name);
+  if (it == options.end())
+    return false;
+  // addOccurrence() runs the option's parser, exactly as a command-line
+  // occurrence would, and marks the option as explicitly set.
+  return !it->second->addOccurrence(1, name, value);
+}
+
 // Restore an LLVM command-line option to a previous value
 template <typename T> void restoreLLVMOption(const std::string &name, T value);
 
@@ -371,6 +387,21 @@ std::string translateLLVMIRToASM(
       }
     }
   }
+
+  // TRITON_PRE_RA_SCHED=<source|linearize|list-ilp|list-burr|fast|...> selects the
+  // SelectionDAG pre-RA scheduler (LLVM's -pre-RA-sched).
+  //
+  // Why expose it: the default DAG scheduler places a chain-free node near its
+  // consumer, and neither sched.barrier nor s_barrier constrains a *pure* node
+  // (they are chain nodes), so arithmetic can migrate out of the pipeline stage it
+  // was written in. Measured on the gfx950 Gluon FAv4 kernel: 16 of the 32 fsubs
+  // computing the softmax exponent left the PV stage and came to rest in the
+  // following memory stage, where no MFMA can hide them -- the IR handed to ISel
+  // had all 32 inside the stage, and every pass after ISel preserved the split.
+  // "linearize" emits the DAG in source order and keeps them in place.
+  auto preRASched = triton::tools::getStrEnv("TRITON_PRE_RA_SCHED");
+  if (!preRASched.empty())
+    setLLVMOptionFromString("pre-RA-sched", preRASched);
 
   // inline everything
   for (llvm::Function &f : module.functions())
