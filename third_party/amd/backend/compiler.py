@@ -188,10 +188,8 @@ def get_llvm_flags(arch):
     attributes (see make_llir) whenever LLVM offers one.
     """
     flags = []
-    # LLVM has no per-function attribute for the AMDGPU register pressure
-    # trackers yet.
-    if arch in ["gfx942", "gfx950"]:
-        flags.append("amdgpu-use-amdgpu-trackers")
+    # [experiment] amdgpu-use-amdgpu-trackers is off for every arch (a port of
+    # mengfei-jiang/triton@c528593, which reverts #11285).
     return flags
 
 
