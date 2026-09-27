@@ -195,6 +195,53 @@ def get_llvm_flags(arch):
     return flags
 
 
+def _log_compiled_kernel(src, metadata, options, flags, amdgcn):
+    """[experiment] Append one JSON line per compiled kernel for the weekly wheel A/B.
+
+    Active only when RUNDIR is set (the weekly benchmark container sets it); writes
+    to $RUNDIR/out/bench_logs/compile_log/<triton version>.jsonl, which the weekly
+    uploads with the bench logs. It never raises, so it cannot affect a compile.
+    """
+    rundir = os.environ.get("RUNDIR")
+    if not rundir:
+        return
+    try:
+        import json
+        from importlib.metadata import version
+
+        def grab(pattern):
+            m = re.search(pattern, amdgcn)
+            return int(m.group(1)) if m else None
+
+        record = {
+            "wheel": version("triton"),
+            "bench": os.path.basename(sys.argv[0]),
+            "argv": " ".join(sys.argv[1:])[:300],
+            "kernel": metadata["name"],
+            "arch": options.arch,
+            "num_warps": options.num_warps,
+            "waves_per_eu": options.waves_per_eu,
+            "num_stages": options.num_stages,
+            "flags": list(flags),
+            "agpr_alloc_attr": '"amdgpu-agpr-alloc"' in src,
+            "vgpr": grab(r";\s*NumVgprs:\s*(\d+)"),
+            "agpr": grab(r";\s*NumAgprs:\s*(\d+)"),
+            "sgpr": grab(r";\s*NumSgprs:\s*(\d+)"),
+            "scratch": grab(r";\s*ScratchSize:\s*(\d+)"),
+            "occupancy": grab(r";\s*Occupancy:\s*(\d+)"),
+            "vgpr_spill": grab(r"\.vgpr_spill_count:\s*(\d+)"),
+            "sgpr_spill": grab(r"\.sgpr_spill_count:\s*(\d+)"),
+            "asm_sha": hashlib.sha256(amdgcn.encode("utf-8")).hexdigest()[:16],
+            "pid": os.getpid(),
+        }
+        log_dir = os.path.join(rundir, "out", "bench_logs", "compile_log")
+        os.makedirs(log_dir, exist_ok=True)
+        with open(os.path.join(log_dir, f"{record['wheel']}.jsonl"), "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
 def is_fpsan_supported(arch):
     return arch in ["gfx942", "gfx950", "gfx1250"]
 
@@ -746,6 +793,7 @@ class HIPBackend(BaseBackend):
         if knobs.amd.dump_amdgcn:
             print("// -----// AMDGCN Dump //----- //")
             print(amdgcn)
+        _log_compiled_kernel(src, metadata, options, flags, amdgcn)
         return amdgcn
 
     @staticmethod
