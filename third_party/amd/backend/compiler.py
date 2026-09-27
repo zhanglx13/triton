@@ -670,6 +670,12 @@ class HIPBackend(BaseBackend):
         if options.waves_per_eu != 0:
             kernel_fn.add_fn_attr("amdgpu-waves-per-eu", f"{options.waves_per_eu},{options.waves_per_eu}")
 
+        # [experiment] Port of mengfei-jiang/triton@111ff227: work around AGPR
+        # over-allocation until the LLVM fix lands. With this set, kernels whose
+        # occupancy target is at least two waves per SIMD use no AGPRs; single-wave
+        # kernels can still use 256.
+        kernel_fn.add_fn_attr("amdgpu-agpr-alloc", "0")
+
         if is_coexec_scheduler_enabled(options.arch) and options.num_warps <= 4:
             kernel_fn.add_fn_attr("amdgpu-sched-strategy", "coexec")
 
